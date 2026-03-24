@@ -1,0 +1,89 @@
+# oasyce-sdk
+
+Python SDK for the Oasyce L1 chain — agent-native settlement infrastructure for AI.
+
+## Install
+
+    pip install oasyce-sdk
+
+## Quick Start
+
+    from oasyce_sdk import OasyceClient
+    client = OasyceClient("http://localhost:1317")
+
+## OasyceClient Methods
+
+### Capability Marketplace
+- list_capabilities(tag=None, provider=None) -> list[Capability]
+- get_capability(capability_id) -> Capability
+- get_earnings(provider) -> Earnings
+
+### Data Assets
+- list_assets(tag=None, owner=None) -> list[DataAsset]
+- get_asset(asset_id) -> DataAsset
+- get_shares(asset_id) -> list[ShareHolder]
+- get_bonding_curve(asset_id) -> BondingCurve
+
+### Settlement
+- get_escrow(escrow_id) -> Escrow
+- list_escrows(creator) -> list[Escrow]
+
+### Reputation
+- get_reputation(address) -> Reputation
+- get_leaderboard() -> list[Reputation]
+
+### Work (Proof of Useful Work)
+- get_task(task_id) -> Task
+- list_tasks(status=None) -> list[Task]
+- list_executors() -> list[Executor]
+
+### Onboarding
+- get_registration(address) -> Registration
+- get_debt(address) -> Debt
+
+### Bank / Auth / Block (Cosmos SDK)
+- get_balance(address) -> Balance
+- get_account(address) -> Account
+- get_latest_block() -> Block
+
+### Transaction Builders
+- build_register_capability(sender, name, endpoint, price_uoas, tags=None) -> dict
+- build_invoke_capability(sender, capability_id, input_data=None) -> dict
+- build_register_asset(sender, name, content_hash, tags=None) -> dict
+- build_buy_shares(sender, asset_id, amount_uoas) -> dict
+- build_sell_shares(sender, asset_id, shares) -> dict
+- broadcast_tx(signed_tx) -> TxResult
+
+### Utility
+- health() -> bool
+- oas_to_uoas(oas) -> int
+- uoas_to_oas(uoas) -> float
+
+## Types (frozen dataclasses)
+
+Capability, Earnings, DataAsset, ShareHolder, BondingCurve, Escrow,
+Reputation, Task, Executor, Registration, Debt, Balance, Account, Block, TxResult
+
+## Error Hierarchy
+
+OasyceError
+  NotFoundError      — 404 / gRPC NOT_FOUND
+  ChainError         — application-level chain error
+  HTTPError          — unexpected HTTP status
+  ConnectionError    — cannot reach node
+  TimeoutError       — request timed out
+  ValidationError    — bad input before request sent
+
+## Key Concepts
+
+- OAS: protocol token. 1 OAS = 1,000,000 uoas
+- Bonding Curve: tokens = supply * ((1 + payment/reserve)^0.5 - 1), CW=0.5
+- Fee Split: 93% creator, 3% validator, 2% burn, 2% treasury
+- Access Levels: >=0.1% L0, >=1% L1, >=5% L2, >=10% L3
+
+## Links
+
+- Chain: https://github.com/Shangri-la-0428/oasyce-chain
+- SDK: https://github.com/Shangri-la-0428/oasyce-sdk
+- Plugin Engine: https://github.com/Shangri-la-0428/Oasyce_Claw_Plugin_Engine
+- Discord: https://discord.gg/tfrCn54yZW
