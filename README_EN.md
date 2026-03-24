@@ -1,16 +1,14 @@
 # oasyce-sdk
 
-Oasyce L1 链 Python SDK —— 为 AI 构建的 Agent 原生结算基础设施。
+Python SDK for the Oasyce L1 chain -- agent-native settlement infrastructure for AI.
 
-[English](README_EN.md)
-
-## 安装
+## Install
 
 ```bash
 pip install oasyce-sdk
 ```
 
-## 快速开始
+## Quick Start
 
 ```python
 from oasyce_sdk import OasyceClient
@@ -18,26 +16,26 @@ from oasyce_sdk import OasyceClient
 client = OasyceClient("http://localhost:1317")
 caps = client.list_capabilities(tag="llm")
 bal = client.get_balance("oasyce1abc...")
-print(f"发现 {len(caps)} 个能力, 余额: {bal.amount_oas} OAS")
+print(f"Found {len(caps)} capabilities, balance: {bal.amount_oas} OAS")
 ```
 
-## API 参考
+## API Reference
 
-### 构造函数
+### Constructor
 
 ```python
 OasyceClient(base_url="http://localhost:1317", timeout=10)
 ```
 
-连接 Oasyce 链节点的 REST API (gRPC-gateway)。
+Connect to an Oasyce chain node's REST API (gRPC-gateway).
 
 ---
 
-### 能力市场 (Capability Marketplace)
+### Capability Marketplace
 
 #### `list_capabilities(tag=None, provider=None) -> list[Capability]`
 
-列出所有已注册的 AI 能力。支持按标签或提供者地址过滤。
+List all registered AI capabilities. Filter by tag or provider address.
 
 ```python
 all_caps = client.list_capabilities()
@@ -47,29 +45,29 @@ my_caps = client.list_capabilities(provider="oasyce1abc...")
 
 #### `get_capability(capability_id) -> Capability`
 
-按 ID 查询单个能力。
+Query a single capability by ID.
 
 ```python
 cap = client.get_capability("cap-001")
-print(cap.name, cap.price_per_call, "uoas/次")
+print(cap.name, cap.price_per_call, "uoas per call")
 ```
 
 #### `get_earnings(provider) -> Earnings`
 
-查询提供者在所有能力上的累计收入。
+Query total earnings for a provider across all their capabilities.
 
 ```python
 earnings = client.get_earnings("oasyce1abc...")
-print(f"累计收入 {client.uoas_to_oas(earnings.total_earned_uoas)} OAS, 共 {earnings.total_calls} 次调用")
+print(f"Earned {client.uoas_to_oas(earnings.total_earned_uoas)} OAS over {earnings.total_calls} calls")
 ```
 
 ---
 
-### 数据资产 (Data Assets)
+### Data Assets
 
 #### `list_assets(tag=None, owner=None) -> list[DataAsset]`
 
-列出数据资产，支持按标签或所有者过滤。
+List data assets with optional tag/owner filters.
 
 ```python
 assets = client.list_assets(tag="ml")
@@ -77,48 +75,48 @@ assets = client.list_assets(tag="ml")
 
 #### `get_asset(asset_id) -> DataAsset`
 
-查询单个数据资产。
+Query a single data asset.
 
 ```python
 asset = client.get_asset("asset-001")
-print(asset.name, asset.status, f"已发行 {asset.total_shares} 份")
+print(asset.name, asset.status, f"{asset.total_shares} shares outstanding")
 ```
 
 #### `get_shares(asset_id) -> list[ShareHolder]`
 
-列出数据资产的所有持有人。
+List all shareholders of a data asset.
 
 ```python
 holders = client.get_shares("asset-001")
 for h in holders:
-    print(f"{h.address}: {h.shares} 份")
+    print(f"{h.address}: {h.shares} shares")
 ```
 
 #### `get_bonding_curve(asset_id) -> BondingCurve`
 
-查询联合曲线状态（供应量、储备金、现价）。
+Query the bonding curve state (supply, reserve, spot price).
 
 ```python
 bc = client.get_bonding_curve("asset-001")
-print(f"现价: {bc.spot_price_uoas} uoas, 储备: {bc.reserve_uoas} uoas")
+print(f"Spot price: {bc.spot_price_uoas} uoas, reserve: {bc.reserve_uoas} uoas")
 ```
 
 ---
 
-### 结算 (Settlement)
+### Settlement
 
 #### `get_escrow(escrow_id) -> Escrow`
 
-按 ID 查询托管。
+Query a single escrow by ID.
 
 ```python
 esc = client.get_escrow("esc-001")
-print(esc.status)  # LOCKED, RELEASED, REFUNDED, EXPIRED
+print(esc.status)  # LOCKED, RELEASED, REFUNDED, or EXPIRED
 ```
 
 #### `list_escrows(creator) -> list[Escrow]`
 
-列出某地址创建的所有托管。
+List all escrows created by an address.
 
 ```python
 escrows = client.list_escrows("oasyce1abc...")
@@ -127,20 +125,20 @@ locked = [e for e in escrows if e.status == "LOCKED"]
 
 ---
 
-### 信誉 (Reputation)
+### Reputation
 
 #### `get_reputation(address) -> Reputation`
 
-查询地址的信誉分。
+Query the reputation score for an address.
 
 ```python
 rep = client.get_reputation("oasyce1abc...")
-print(f"评分: {rep.score}, 来自 {rep.total_feedback} 次反馈")
+print(f"Score: {rep.score}, from {rep.total_feedback} feedbacks")
 ```
 
 #### `get_leaderboard() -> list[Reputation]`
 
-获取信誉排行榜。
+Get the top-rated providers.
 
 ```python
 lb = client.get_leaderboard()
@@ -150,11 +148,11 @@ for entry in lb[:5]:
 
 ---
 
-### 工作证明 (Proof of Useful Work)
+### Work (Proof of Useful Work)
 
 #### `get_task(task_id) -> Task`
 
-按 ID 查询计算任务。
+Query a compute task by ID.
 
 ```python
 task = client.get_task("42")
@@ -163,7 +161,7 @@ print(task.status, task.bounty_uoas)
 
 #### `list_tasks(status=None) -> list[Task]`
 
-按状态过滤任务（1=已提交, 2=已分配, ..., 5=已结算）。
+List tasks filtered by status integer (1=SUBMITTED, 2=ASSIGNED, ..., 5=SETTLED).
 
 ```python
 pending = client.list_tasks(status=1)
@@ -171,42 +169,42 @@ pending = client.list_tasks(status=1)
 
 #### `list_executors() -> list[Executor]`
 
-列出所有已注册的执行者。
+List all registered executor profiles.
 
 ```python
 for ex in client.list_executors():
-    print(f"{ex.address}: 已完成 {ex.tasks_completed} 个任务, 活跃={ex.active}")
+    print(f"{ex.address}: {ex.tasks_completed} completed, active={ex.active}")
 ```
 
 ---
 
-### 注册 (Onboarding)
+### Onboarding
 
 #### `get_registration(address) -> Registration`
 
-查询用户的注册信息。
+Query a user's onboarding registration.
 
 ```python
 reg = client.get_registration("oasyce1new...")
-print(f"空投: {reg.airdrop_amount} uoas, 已还: {reg.repaid_amount} uoas")
+print(f"Airdrop: {reg.airdrop_amount} uoas, repaid: {reg.repaid_amount} uoas")
 ```
 
 #### `get_debt(address) -> Debt`
 
-查询未偿还的注册债务。
+Query outstanding onboarding debt.
 
 ```python
 debt = client.get_debt("oasyce1new...")
-print(f"剩余: {debt.remaining} uoas ({debt.status})")
+print(f"Remaining: {debt.remaining} uoas ({debt.status})")
 ```
 
 ---
 
-### 银行 / 账户 / 区块 (Cosmos SDK)
+### Bank / Auth / Block (Cosmos SDK)
 
 #### `get_balance(address) -> Balance`
 
-查询 uoas 余额。
+Query the uoas balance for an address.
 
 ```python
 bal = client.get_balance("oasyce1abc...")
@@ -215,27 +213,27 @@ print(f"{bal.amount_oas} OAS ({bal.amount_uoas} uoas)")
 
 #### `get_account(address) -> Account`
 
-查询账户号和序列号（签名交易时需要）。
+Query account number and sequence (needed for transaction signing).
 
 ```python
 acct = client.get_account("oasyce1abc...")
-print(f"账户 #{acct.account_number}, 序列 {acct.sequence}")
+print(f"Account #{acct.account_number}, sequence {acct.sequence}")
 ```
 
 #### `get_latest_block() -> Block`
 
-查询最新区块。
+Query the latest block.
 
 ```python
 block = client.get_latest_block()
-print(f"高度 {block.height}, 链 {block.chain_id}")
+print(f"Height {block.height}, chain {block.chain_id}")
 ```
 
 ---
 
-### 交易构建器
+### Transaction Builders
 
-这些方法生成未签名的交易 JSON。签名后传给 `broadcast_tx()` 广播。
+These methods generate unsigned transaction JSON. Sign with your key and pass to `broadcast_tx()`.
 
 #### `build_register_capability(sender, name, endpoint, price_uoas, tags=None) -> dict`
 
@@ -284,43 +282,43 @@ tx = client.build_sell_shares("oasyce1seller...", "asset-001", 500)
 
 #### `broadcast_tx(signed_tx) -> TxResult`
 
-广播已签名交易。
+Broadcast a signed transaction.
 
 ```python
 result = client.broadcast_tx(signed_tx)
 if result.success:
-    print(f"TX 哈希: {result.tx_hash}")
+    print(f"TX hash: {result.tx_hash}")
 else:
-    print(f"失败 (code {result.code}): {result.raw_log}")
+    print(f"Failed (code {result.code}): {result.raw_log}")
 ```
 
 ---
 
-### 工具方法
+### Utility
 
 #### `health() -> bool`
 
-检查节点是否可达。
+Check if the node is reachable.
 
 ```python
 if client.health():
-    print("节点运行中")
+    print("Node is up")
 ```
 
 #### `oas_to_uoas(oas) -> int` / `uoas_to_oas(uoas) -> float`
 
-OAS 和 micro-OAS 之间转换。1 OAS = 1,000,000 uoas。
+Convert between OAS and micro-OAS. 1 OAS = 1,000,000 uoas.
 
 ```python
-OasyceClient.oas_to_uoas(1.5)     # 1500000
+OasyceClient.oas_to_uoas(1.5)   # 1500000
 OasyceClient.uoas_to_oas(2500000)  # 2.5
 ```
 
 ---
 
-## 错误处理
+## Error Handling
 
-所有错误继承自 `OasyceError`，可以宽泛或精确地捕获：
+All errors inherit from `OasyceError`, so you can catch broadly or specifically:
 
 ```python
 from oasyce_sdk import OasyceClient
@@ -331,37 +329,37 @@ client = OasyceClient()
 try:
     cap = client.get_capability("cap-xyz")
 except NotFoundError:
-    print("能力不存在")
+    print("Capability does not exist")
 except TimeoutError:
-    print("节点响应慢")
+    print("Node is slow")
 except OasyceError as e:
-    print(f"出错了: {e}")
+    print(f"Something went wrong: {e}")
 ```
 
-异常层级：
+Exception hierarchy:
 
 ```
 OasyceError
-  +-- NotFoundError      # 链上未找到资源 (404 / gRPC NOT_FOUND)
-  +-- ChainError         # 应用层链错误
-  +-- HTTPError          # 非预期 HTTP 状态码
-  +-- ConnectionError    # 无法连接节点
-  +-- TimeoutError       # 请求超时
-  +-- ValidationError    # 请求发出前的输入校验错误
+  +-- NotFoundError      # Resource not on-chain (404 / gRPC NOT_FOUND)
+  +-- ChainError         # Application-level chain error
+  +-- HTTPError          # Unexpected HTTP status
+  +-- ConnectionError    # Cannot reach node
+  +-- TimeoutError       # Request timed out
+  +-- ValidationError    # Bad input before request is sent
 ```
 
-## 为什么不直接用 `requests`？
+## Why not just use `requests`?
 
-你当然可以直接请求 `http://localhost:1317/oasyce/capability/v1/capabilities`。这个 SDK 额外提供：
+You could hit `http://localhost:1317/oasyce/capability/v1/capabilities` directly. This SDK adds:
 
-- **类型化响应** —— 编辑器自动补全，不用猜 JSON key
-- **异常层级** —— 区分 `NotFoundError` / `TimeoutError` / `ChainError`
-- **单位转换** —— 内置 `oas_to_uoas()` / `uoas_to_oas()`
-- **Protobuf 枚举映射** —— `ESCROW_STATUS_LOCKED` 自动变成 `"LOCKED"`
-- **交易构建器** —— 正确的消息结构，不需要读 proto 文件
-- **线程安全** —— 无全局状态，内部使用 `requests.Session`
-- **单一依赖** —— 只需 `requests>=2.28`，无需编译 protobuf
+- **Typed responses** -- auto-complete in your editor, no guessing JSON keys
+- **Error hierarchy** -- catch `NotFoundError` vs `TimeoutError` vs `ChainError`
+- **Unit conversion** -- `oas_to_uoas()` / `uoas_to_oas()` built in
+- **Protobuf enum mapping** -- `ESCROW_STATUS_LOCKED` becomes `"LOCKED"`
+- **Transaction builders** -- correct message structure without reading proto files
+- **Thread-safe** -- no global state, uses `requests.Session` internally
+- **One dependency** -- only `requests>=2.28`, no protobuf compilation needed
 
-## 协议
+## License
 
 Apache-2.0
