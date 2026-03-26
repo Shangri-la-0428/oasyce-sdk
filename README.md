@@ -487,6 +487,12 @@ OasyceError
 - **线程安全** —— 无全局状态，内部使用 `requests.Session`
 - **单一依赖** —— 只需 `requests>=2.28`，无需编译 protobuf
 
+## 生态链接
+
+- [oasyce-chain](https://github.com/Shangri-la-0428/oasyce-chain) — L1 链（Go / Cosmos SDK），公测文档见 `docs/PUBLIC_BETA_CN.md`
+- [Plugin Engine](https://github.com/Shangri-la-0428/Oasyce_Claw_Plugin_Engine) — Python CLI + Dashboard + DataVault（`pip install oasyce`）
+- [Discord](https://discord.gg/tfrCn54yZW)
+
 ## 协议
 
 Apache-2.0
