@@ -1,5 +1,7 @@
 # oasyce-sdk
 
+<!-- mcp-name: io.github.Shangri-la-0428/oasyce -->
+
 Oasyce L1 链 Python SDK —— AI Agent 原生经济系统：产权确权、智能合约、自动仲裁。
 
 [English](README_EN.md)
