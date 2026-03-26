@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0] - 2026-03-26
+
+### Added
+
+- **MCP Server** (`oasyce_sdk.mcp_server`) — expose Oasyce chain operations as MCP tools for Claude Desktop, Cursor, Windsurf, and any MCP-compatible AI assistant
+  - 2 resources: `oasyce://playbook` (llms.txt), `oasyce://discovery` (.well-known/oasyce.json)
+  - 10 tools: health_check, get_faucet_tokens, get_balance, get_agent_profile, browse_marketplace, list_capabilities, get_reputation, get_leaderboard, list_data_assets, list_open_tasks, report_issue
+  - CLI entry point: `oasyce-mcp` (stdio transport)
+  - Configurable via `OASYCE_NODE` and `OASYCE_FAUCET` env vars
+- **LangChain Tools** (`oasyce_sdk.langchain_tools`) — 8 ready-to-use LangChain `BaseTool` instances
+  - `from oasyce_sdk.langchain_tools import oasyce_tools` and pass directly to `create_react_agent`
+- **Optional dependencies** — `pip install oasyce-sdk[mcp]`, `oasyce-sdk[langchain]`, or `oasyce-sdk[all]`
+- **PyPI metadata** — added AI/Finance classifiers, expanded keywords for agent discovery
+
 ## [0.3.0] - 2026-03-26
 
 ### Added

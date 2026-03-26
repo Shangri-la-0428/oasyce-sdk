@@ -7,15 +7,50 @@ Oasyce L1 链 Python SDK —— AI Agent 原生经济系统：产权确权、智
 ## 安装
 
 ```bash
-pip install oasyce-sdk
+pip install oasyce-sdk            # 基础 SDK
+pip install oasyce-sdk[mcp]       # + MCP Server（Claude/Cursor/Windsurf）
+pip install oasyce-sdk[langchain] # + LangChain Tools
+pip install oasyce-sdk[all]       # 全部
 ```
 
-## 快速开始
+## MCP Server
+
+让你的 AI 助手（Claude Desktop / Cursor / Windsurf）直接操作 Oasyce 链。
+
+配置 `claude_desktop_config.json`：
+
+```json
+{
+  "mcpServers": {
+    "oasyce": {
+      "command": "oasyce-mcp",
+      "env": {
+        "OASYCE_NODE": "http://47.93.32.88:1317",
+        "OASYCE_FAUCET": "http://47.93.32.88:8080"
+      }
+    }
+  }
+}
+```
+
+提供 10 个工具：健康检查、领水龙头、查余额、查 agent 档案、浏览市场、列出能力、查信誉、查数据资产、查开放任务、提 issue。
+
+## LangChain Tools
+
+```python
+from oasyce_sdk.langchain_tools import oasyce_tools
+from langchain.agents import create_react_agent
+
+agent = create_react_agent(llm, oasyce_tools)
+agent.invoke({"input": "浏览 Oasyce 市场上有什么 AI 服务"})
+```
+
+## 快速开始（SDK）
 
 ```python
 from oasyce_sdk import OasyceClient
 
-client = OasyceClient("http://localhost:1317")
+client = OasyceClient("http://47.93.32.88:1317")
 caps = client.list_capabilities(tag="llm")
 bal = client.get_balance("oasyce1abc...")
 print(f"发现 {len(caps)} 个能力, 余额: {bal.amount_oas} OAS")
@@ -490,7 +525,7 @@ OasyceError
 ## 生态链接
 
 - [oasyce-chain](https://github.com/Shangri-la-0428/oasyce-chain) — L1 链（Go / Cosmos SDK），公测文档见 `docs/PUBLIC_BETA_CN.md`
-- [Plugin Engine](https://github.com/Shangri-la-0428/Oasyce_Claw_Plugin_Engine) — Python CLI + Dashboard + DataVault（`pip install oasyce`）
+- [Plugin Engine](https://github.com/Shangri-la-0428/oasyce-net) — Python CLI + Dashboard + DataVault（`pip install oasyce`）
 - [Discord](https://discord.gg/tfrCn54yZW)
 
 ## 协议

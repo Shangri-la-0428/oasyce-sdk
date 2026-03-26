@@ -7,15 +7,50 @@ Python SDK for the Oasyce L1 chain -- agent-native settlement infrastructure whe
 ## Install
 
 ```bash
-pip install oasyce-sdk
+pip install oasyce-sdk            # Core SDK
+pip install oasyce-sdk[mcp]       # + MCP Server (Claude/Cursor/Windsurf)
+pip install oasyce-sdk[langchain] # + LangChain Tools
+pip install oasyce-sdk[all]       # Everything
 ```
 
-## Quick Start
+## MCP Server
+
+Let your AI assistant (Claude Desktop / Cursor / Windsurf) interact with the Oasyce chain directly.
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "oasyce": {
+      "command": "oasyce-mcp",
+      "env": {
+        "OASYCE_NODE": "http://47.93.32.88:1317",
+        "OASYCE_FAUCET": "http://47.93.32.88:8080"
+      }
+    }
+  }
+}
+```
+
+10 tools: health check, faucet, balance, agent profile, marketplace, capabilities, reputation, data assets, open tasks, issue reporting.
+
+## LangChain Tools
+
+```python
+from oasyce_sdk.langchain_tools import oasyce_tools
+from langchain.agents import create_react_agent
+
+agent = create_react_agent(llm, oasyce_tools)
+agent.invoke({"input": "Browse AI services on Oasyce marketplace"})
+```
+
+## Quick Start (SDK)
 
 ```python
 from oasyce_sdk import OasyceClient
 
-client = OasyceClient("http://localhost:1317")
+client = OasyceClient("http://47.93.32.88:1317")
 caps = client.list_capabilities(tag="llm")
 bal = client.get_balance("oasyce1abc...")
 print(f"Found {len(caps)} capabilities, balance: {bal.amount_oas} OAS")
