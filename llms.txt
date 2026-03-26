@@ -151,5 +151,5 @@ OasyceError
 
 - Chain: https://github.com/Shangri-la-0428/oasyce-chain
 - SDK: https://github.com/Shangri-la-0428/oasyce-sdk
-- Plugin Engine: https://github.com/Shangri-la-0428/Oasyce_Claw_Plugin_Engine
+- Plugin Engine: https://github.com/Shangri-la-0428/oasyce-net
 - Discord: https://discord.gg/tfrCn54yZW
