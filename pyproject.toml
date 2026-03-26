@@ -46,6 +46,8 @@ Issues = "https://github.com/Shangri-la-0428/oasyce-sdk/issues"
 Chain = "https://github.com/Shangri-la-0428/oasyce-chain"
 MCP = "https://github.com/Shangri-la-0428/oasyce-sdk#mcp-server"
 
+mcpName = "io.github.Shangri-la-0428/oasyce"
+
 [tool.hatch.build.targets.wheel]
 packages = ["oasyce_sdk"]
 

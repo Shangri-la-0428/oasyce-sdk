@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Shangri-la-0428/oasyce",
+  "description": "On-chain economy for AI agents: escrow, marketplace, data rights, reputation, disputes.",
+  "repository": {
+    "url": "https://github.com/Shangri-la-0428/oasyce-sdk",
+    "source": "github"
+  },
+  "version": "0.4.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "oasyce-sdk",
+      "version": "0.4.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Oasyce chain REST API endpoint",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "OASYCE_NODE"
+        },
+        {
+          "description": "Oasyce testnet faucet endpoint",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "OASYCE_FAUCET"
+        }
+      ]
+    }
+  ]
+}
