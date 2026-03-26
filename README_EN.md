@@ -1,6 +1,8 @@
 # oasyce-sdk
 
-Python SDK for the Oasyce L1 chain -- agent-native settlement infrastructure for AI.
+Python SDK for the Oasyce L1 chain -- agent-native settlement infrastructure where AI agents own property, enforce contracts, and resolve disputes autonomously.
+
+[中文](README.md)
 
 ## Install
 
@@ -61,6 +63,19 @@ earnings = client.get_earnings("oasyce1abc...")
 print(f"Earned {client.uoas_to_oas(earnings.total_earned_uoas)} OAS over {earnings.total_calls} calls")
 ```
 
+#### `get_invocation(invocation_id) -> Invocation`
+
+Query a single invocation record (status, challenge window, usage report).
+
+```python
+inv = client.get_invocation("INV_0000000000000001")
+print(inv.status, inv.output_hash, inv.usage_report)
+```
+
+#### `get_capability_params() -> dict`
+
+Query capability module parameters.
+
 ---
 
 ### Data Assets
@@ -101,6 +116,31 @@ bc = client.get_bonding_curve("asset-001")
 print(f"Spot price: {bc.spot_price_uoas} uoas, reserve: {bc.reserve_uoas} uoas")
 ```
 
+#### `get_access_level(asset_id, address) -> AccessLevel`
+
+Query an address's access level on a data asset (L0-L3).
+
+```python
+al = client.get_access_level("asset-001", "oasyce1buyer...")
+print(f"Level: {al.level}, equity: {al.equity_bps} bps")
+```
+
+#### `get_dispute(dispute_id) -> Dispute` / `list_disputes(asset_id=None) -> list[Dispute]`
+
+Query disputes.
+
+#### `get_migration_path(source_id, target_id) -> MigrationPath`
+
+Query migration path between two asset versions.
+
+#### `get_asset_children(asset_id) -> list[DataAsset]`
+
+Query asset child versions (forks).
+
+#### `get_datarights_params() -> dict`
+
+Query datarights module parameters.
+
 ---
 
 ### Settlement
@@ -122,6 +162,10 @@ List all escrows created by an address.
 escrows = client.list_escrows("oasyce1abc...")
 locked = [e for e in escrows if e.status == "LOCKED"]
 ```
+
+#### `get_settlement_params() -> dict`
+
+Query settlement module parameters.
 
 ---
 
@@ -145,6 +189,10 @@ lb = client.get_leaderboard()
 for entry in lb[:5]:
     print(f"{entry.address}: {entry.score}")
 ```
+
+#### `get_reputation_params() -> dict`
+
+Query reputation module parameters.
 
 ---
 
@@ -176,6 +224,18 @@ for ex in client.list_executors():
     print(f"{ex.address}: {ex.tasks_completed} completed, active={ex.active}")
 ```
 
+#### `get_executor(address) -> Executor`
+
+Query a single executor.
+
+#### `list_tasks_by_creator(creator) -> list[Task]` / `list_tasks_by_executor(executor) -> list[Task]`
+
+Filter tasks by creator or executor.
+
+#### `get_work_params() -> dict` / `get_epoch_stats(epoch) -> EpochStats`
+
+Query work module parameters and epoch statistics.
+
 ---
 
 ### Onboarding
@@ -197,6 +257,10 @@ Query outstanding onboarding debt.
 debt = client.get_debt("oasyce1new...")
 print(f"Remaining: {debt.remaining} uoas ({debt.status})")
 ```
+
+#### `get_onboarding_params() -> dict`
+
+Query onboarding module parameters (PoW difficulty, airdrop amount, etc.).
 
 ---
 
@@ -231,54 +295,82 @@ print(f"Height {block.height}, chain {block.chain_id}")
 
 ---
 
-### Transaction Builders
+### PoW Solver
 
-These methods generate unsigned transaction JSON. Sign with your key and pass to `broadcast_tx()`.
+#### `solve_pow(address, difficulty=16) -> PowResult`
 
-#### `build_register_capability(sender, name, endpoint, price_uoas, tags=None) -> dict`
-
-```python
-tx = client.build_register_capability(
-    sender="oasyce1abc...",
-    name="My LLM",
-    endpoint="https://api.example.com/v1",
-    price_uoas=5000,
-    tags=["llm", "gpt"],
-)
-```
-
-#### `build_invoke_capability(sender, capability_id, input_data=None) -> dict`
+Pure-Python PoW solver, matches the Go chain verifier exactly.
 
 ```python
-tx = client.build_invoke_capability(
-    sender="oasyce1consumer...",
-    capability_id="cap-001",
-    input_data=b'{"prompt": "hello"}',
-)
+result = OasyceClient.solve_pow("oasyce1abc...", difficulty=16)
+print(f"Nonce: {result.nonce}, attempts: {result.attempts}")
+
+# Then register
+tx = client.build_self_register("oasyce1abc...", result.nonce)
 ```
 
-#### `build_register_asset(sender, name, content_hash, tags=None) -> dict`
+---
 
-```python
-tx = client.build_register_asset(
-    sender="oasyce1owner...",
-    name="Training Dataset v1",
-    content_hash="sha256:abc123",
-    tags=["ml", "nlp"],
-)
-```
+### Transaction Builders (27)
 
-#### `build_buy_shares(sender, asset_id, amount_uoas) -> dict`
+All `build_*` methods produce unsigned Cosmos SDK transaction JSON. Sign and pass to `broadcast_tx()`.
 
-```python
-tx = client.build_buy_shares("oasyce1buyer...", "asset-001", 100000)
-```
+#### Capability Marketplace
 
-#### `build_sell_shares(sender, asset_id, shares) -> dict`
+| Method | Description |
+|--------|-------------|
+| `build_register_capability(sender, name, endpoint, price_uoas, ...)` | Register AI capability |
+| `build_invoke_capability(sender, capability_id, input_data)` | Invoke capability (auto-escrow) |
+| `build_complete_invocation(sender, invocation_id, output_hash, usage_report)` | Submit output (starts challenge window) |
+| `build_fail_invocation(sender, invocation_id)` | Mark invocation failed |
+| `build_claim_invocation(sender, invocation_id)` | Claim payment after challenge window |
+| `build_dispute_invocation(sender, invocation_id, reason)` | Dispute within challenge window |
 
-```python
-tx = client.build_sell_shares("oasyce1seller...", "asset-001", 500)
-```
+#### Data Rights
+
+| Method | Description |
+|--------|-------------|
+| `build_register_asset(sender, name, content_hash, ...)` | Register data asset |
+| `build_buy_shares(sender, asset_id, amount_uoas)` | Buy shares (Bancor curve) |
+| `build_sell_shares(sender, asset_id, shares)` | Sell shares (reverse curve) |
+| `build_file_dispute(sender, asset_id, reason, evidence, remedy)` | File dispute |
+| `build_initiate_shutdown(sender, asset_id)` | Initiate shutdown (7-day cooldown) |
+| `build_claim_settlement(sender, asset_id)` | Claim pro-rata reserve after shutdown |
+| `build_create_migration(sender, source_id, target_id, rate_bps, max_shares)` | Create migration path |
+| `build_migrate(sender, source_id, target_id, shares)` | Execute cross-version migration |
+
+#### Settlement
+
+| Method | Description |
+|--------|-------------|
+| `build_create_escrow(sender, amount_uoas, capability_id, asset_id)` | Create escrow |
+| `build_release_escrow(sender, escrow_id)` | Release escrow (90/5/2/3 split) |
+| `build_refund_escrow(sender, escrow_id)` | Refund escrow |
+
+#### Reputation
+
+| Method | Description |
+|--------|-------------|
+| `build_submit_feedback(sender, invocation_id, rating, comment)` | Submit feedback (0-500) |
+| `build_report_misbehavior(sender, target, evidence_type, evidence)` | Report misbehavior |
+
+#### Work (PoUW)
+
+| Method | Description |
+|--------|-------------|
+| `build_register_executor(sender, task_types, max_cu)` | Register executor |
+| `build_update_executor(sender, task_types, max_cu, active)` | Update executor |
+| `build_submit_task(sender, task_type, input_hash, input_uri, max_cu, bounty_uoas)` | Submit compute task |
+| `build_commit_result(sender, task_id, commit_hash)` | Commit result hash |
+| `build_reveal_result(sender, task_id, output_hash, output_uri, cu_used, salt)` | Reveal result |
+| `build_dispute_result(sender, task_id, reason, bond_uoas)` | Dispute result |
+
+#### Onboarding
+
+| Method | Description |
+|--------|-------------|
+| `build_self_register(sender, nonce)` | PoW self-registration |
+| `build_repay_debt(sender, amount_uoas)` | Repay airdrop debt |
 
 #### `broadcast_tx(signed_tx) -> TxResult`
 
@@ -310,9 +402,44 @@ if client.health():
 Convert between OAS and micro-OAS. 1 OAS = 1,000,000 uoas.
 
 ```python
-OasyceClient.oas_to_uoas(1.5)   # 1500000
+OasyceClient.oas_to_uoas(1.5)     # 1500000
 OasyceClient.uoas_to_oas(2500000)  # 2.5
 ```
+
+---
+
+## AHRP Adapter (v0.3.0)
+
+`SigningBridge` combines SDK TX builders with `oasyced` CLI signing for one-step broadcast:
+
+```python
+from oasyce_sdk import OasyceClient, SigningBridge
+
+client = OasyceClient("http://localhost:1317")
+bridge = SigningBridge(
+    client=client,
+    oasyced_path="./oasyced",
+    key_name="my-agent",
+    chain_id="oasyce-testnet-1",
+    node="tcp://localhost:26657",
+)
+
+# Build + sign + broadcast
+result = bridge.create_escrow(amount_uoas=50000, asset_id="DATA_001")
+print(result.tx_hash, result.success)
+```
+
+`AhrpChainAdapter` adapts `SigningBridge` to the Plugin Engine AHRP Executor interface, **zero changes to AHRP code required**:
+
+```python
+from oasyce_sdk import AhrpChainAdapter
+
+adapter = AhrpChainAdapter(bridge)
+# Pass directly to AHRP Executor:
+# executor = AHRPExecutor(chain_client=adapter)
+```
+
+See `examples/ahrp_two_agent_demo.py` for a complete two-agent demo.
 
 ---
 
@@ -357,6 +484,8 @@ You could hit `http://localhost:1317/oasyce/capability/v1/capabilities` directly
 - **Unit conversion** -- `oas_to_uoas()` / `uoas_to_oas()` built in
 - **Protobuf enum mapping** -- `ESCROW_STATUS_LOCKED` becomes `"LOCKED"`
 - **Transaction builders** -- correct message structure without reading proto files
+- **Signing bridge** -- build + sign + broadcast in one call via CLI
+- **AHRP adapter** -- connect to Plugin Engine's agent routing protocol with zero code changes
 - **Thread-safe** -- no global state, uses `requests.Session` internally
 - **One dependency** -- only `requests>=2.28`, no protobuf compilation needed
 

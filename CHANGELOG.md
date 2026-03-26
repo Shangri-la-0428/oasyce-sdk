@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] - 2026-03-26
+
+### Added
+
+- **`SigningBridge`** — CLI signing bridge wrapping `OasyceClient` TX builders + `oasyced` subprocess for sign + broadcast
+  - `broadcast(tx_body)` — sign and broadcast any unsigned TX body
+  - Convenience methods: `create_escrow`, `release_escrow`, `register_capability`, `invoke_capability`, `complete_invocation`, `submit_feedback`, etc.
+  - Configurable key, chain ID, node, fees, keyring backend
+- **`AhrpChainAdapter`** — drop-in adapter connecting Plugin Engine's AHRP Executor to the live chain
+  - Satisfies `_chain.chain.create_escrow()` / `release_escrow()` interface
+  - Zero modifications required to AHRP code in Plugin Engine
+  - `is_chain_mode` property for health checking
+- **`examples/ahrp_two_agent_demo.py`** — two-agent AHRP handshake demo with on-chain escrow settlement
+- **33 new tests** — `test_signing_bridge.py` (21 tests) + `test_ahrp_adapter.py` (12 tests), total 128
+
 ## [0.2.0] - 2026-03-26
 
 ### Added

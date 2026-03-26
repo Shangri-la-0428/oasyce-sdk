@@ -1,6 +1,6 @@
 # oasyce-sdk
 
-Oasyce L1 链 Python SDK —— 为 AI 构建的 Agent 原生结算基础设施。
+Oasyce L1 链 Python SDK —— AI Agent 原生经济系统：产权确权、智能合约、自动仲裁。
 
 [English](README_EN.md)
 
@@ -405,6 +405,41 @@ OAS 和 micro-OAS 之间转换。1 OAS = 1,000,000 uoas。
 OasyceClient.oas_to_uoas(1.5)     # 1500000
 OasyceClient.uoas_to_oas(2500000)  # 2.5
 ```
+
+---
+
+## AHRP 适配器（v0.3.0）
+
+`SigningBridge` 将 SDK 的 TX 构建器与 `oasyced` CLI 签名结合，实现一步到位的交易广播：
+
+```python
+from oasyce_sdk import OasyceClient, SigningBridge
+
+client = OasyceClient("http://localhost:1317")
+bridge = SigningBridge(
+    client=client,
+    oasyced_path="./oasyced",
+    key_name="my-agent",
+    chain_id="oasyce-testnet-1",
+    node="tcp://localhost:26657",
+)
+
+# 构建 + 签名 + 广播
+result = bridge.create_escrow(amount_uoas=50000, asset_id="DATA_001")
+print(result.tx_hash, result.success)
+```
+
+`AhrpChainAdapter` 将 `SigningBridge` 适配为 Plugin Engine AHRP Executor 期望的接口，**无需修改任何 AHRP 代码**：
+
+```python
+from oasyce_sdk import AhrpChainAdapter
+
+adapter = AhrpChainAdapter(bridge)
+# 直接传入 AHRP Executor:
+# executor = AHRPExecutor(chain_client=adapter)
+```
+
+完整示例见 `examples/ahrp_two_agent_demo.py`。
 
 ---
 
