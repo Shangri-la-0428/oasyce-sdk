@@ -8,7 +8,10 @@ for every response.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import random
+import struct
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -22,6 +25,7 @@ from .errors import (
     ValidationError,
 )
 from .types import (
+    AccessLevel,
     Account,
     Balance,
     Block,
@@ -29,9 +33,14 @@ from .types import (
     Capability,
     DataAsset,
     Debt,
+    Dispute,
     Earnings,
+    EpochStats,
     Escrow,
     Executor,
+    Invocation,
+    MigrationPath,
+    PowResult,
     Registration,
     Reputation,
     ShareHolder,
@@ -80,6 +89,32 @@ _REG_STATUS = {
     "REGISTRATION_STATUS_REPAID": "REPAID",
     "REGISTRATION_STATUS_DEFAULTED": "DEFAULTED",
 }
+
+_INVOCATION_STATUS = {
+    "INVOCATION_STATUS_PENDING": "PENDING",
+    "INVOCATION_STATUS_COMPLETED": "COMPLETED",
+    "INVOCATION_STATUS_SUCCESS": "SUCCESS",
+    "INVOCATION_STATUS_FAILED": "FAILED",
+    "INVOCATION_STATUS_DISPUTED": "DISPUTED",
+}
+
+_DISPUTE_STATUS = {
+    "DISPUTE_STATUS_OPEN": "OPEN",
+    "DISPUTE_STATUS_RESOLVED": "RESOLVED",
+    "DISPUTE_STATUS_REJECTED": "REJECTED",
+}
+
+
+def _leading_zero_bits(data: bytes) -> int:
+    """Count leading zero bits in a byte sequence (matches Go bits.LeadingZeros8)."""
+    total = 0
+    for b in data:
+        if b == 0:
+            total += 8
+        else:
+            total += 8 - b.bit_length()
+            break
+    return total
 
 
 def _safe_int(val: Any, default: int = 0) -> int:
@@ -251,6 +286,32 @@ class OasyceClient:
             total_calls=_safe_int(data.get("total_calls")),
         )
 
+    def _parse_invocation(self, raw: Dict[str, Any]) -> Invocation:
+        status_raw = raw.get("status", "INVOCATION_STATUS_PENDING")
+        status = _INVOCATION_STATUS.get(status_raw, status_raw)
+        return Invocation(
+            invocation_id=raw.get("id", ""),
+            capability_id=raw.get("capability_id", ""),
+            consumer=raw.get("consumer", ""),
+            provider=raw.get("provider", ""),
+            status=status,
+            input_hash=raw.get("input_hash", ""),
+            output_hash=raw.get("output_hash", ""),
+            completed_height=_safe_int(raw.get("completed_height")),
+            usage_report=raw.get("usage_report", ""),
+        )
+
+    def get_invocation(self, invocation_id: str) -> Invocation:
+        """Query a single capability invocation by ID."""
+        data = self._get(f"/oasyce/capability/v1/invocation/{invocation_id}")
+        self._check_not_found(data, "Invocation", invocation_id)
+        return self._parse_invocation(data.get("invocation", data))
+
+    def get_capability_params(self) -> Dict[str, Any]:
+        """Query the capability module parameters."""
+        data = self._get("/oasyce/capability/v1/params")
+        return data.get("params", data)
+
     # ------------------------------------------------------------------
     # Data Assets
     # ------------------------------------------------------------------
@@ -325,6 +386,78 @@ class OasyceClient:
             buyer_count=_safe_int(state.get("buyer_count")),
         )
 
+    def get_access_level(self, asset_id: str, address: str) -> AccessLevel:
+        """Query the access level for an address on a data asset."""
+        data = self._get(f"/oasyce/datarights/v1/access_level/{asset_id}/{address}")
+        self._check_not_found(data, "AccessLevel", f"{asset_id}/{address}")
+        return AccessLevel(
+            asset_id=asset_id,
+            address=address,
+            level=data.get("access_level", ""),
+            equity_bps=_safe_int(data.get("equity_bps")),
+            shares=_safe_int(data.get("shares")),
+            total_shares=_safe_int(data.get("total_shares")),
+        )
+
+    def get_dispute(self, dispute_id: str) -> Dispute:
+        """Query a single data rights dispute by ID."""
+        data = self._get(f"/oasyce/datarights/v1/dispute/{dispute_id}")
+        self._check_not_found(data, "Dispute", dispute_id)
+        d = data.get("dispute", data)
+        return Dispute(
+            dispute_id=d.get("id", dispute_id),
+            asset_id=d.get("asset_id", ""),
+            creator=d.get("creator", ""),
+            reason=d.get("reason", ""),
+            status=_DISPUTE_STATUS.get(d.get("status", ""), d.get("status", "")),
+            remedy=d.get("requested_remedy", ""),
+        )
+
+    def list_disputes(self, asset_id: Optional[str] = None) -> List[Dispute]:
+        """List data rights disputes, optionally filtered by asset."""
+        params: Dict[str, Any] = {}
+        if asset_id:
+            params["asset_id"] = asset_id
+        data = self._get("/oasyce/datarights/v1/disputes", params=params)
+        items = data.get("disputes", [])
+        return [
+            Dispute(
+                dispute_id=d.get("id", ""),
+                asset_id=d.get("asset_id", ""),
+                creator=d.get("creator", ""),
+                reason=d.get("reason", ""),
+                status=_DISPUTE_STATUS.get(d.get("status", ""), d.get("status", "")),
+                remedy=d.get("requested_remedy", ""),
+            )
+            for d in items
+        ]
+
+    def get_migration_path(self, source_id: str, target_id: str) -> MigrationPath:
+        """Query a migration path between two data asset versions."""
+        data = self._get(f"/oasyce/datarights/v1/migration_path/{source_id}/{target_id}")
+        self._check_not_found(data, "MigrationPath", f"{source_id}/{target_id}")
+        mp = data.get("migration_path", data)
+        return MigrationPath(
+            source_asset_id=mp.get("source_asset_id", source_id),
+            target_asset_id=mp.get("target_asset_id", target_id),
+            creator=mp.get("creator", ""),
+            exchange_rate_bps=_safe_int(mp.get("exchange_rate_bps")),
+            max_migrated_shares=_safe_int(mp.get("max_migrated_shares")),
+            migrated_shares=_safe_int(mp.get("migrated_shares")),
+            enabled=mp.get("enabled", True),
+        )
+
+    def get_asset_children(self, asset_id: str) -> List[DataAsset]:
+        """Query child assets (forks) of a data asset."""
+        data = self._get(f"/oasyce/datarights/v1/children/{asset_id}")
+        items = data.get("data_assets", [])
+        return [self._parse_data_asset(a) for a in items]
+
+    def get_datarights_params(self) -> Dict[str, Any]:
+        """Query the datarights module parameters."""
+        data = self._get("/oasyce/datarights/v1/params")
+        return data.get("params", data)
+
     # ------------------------------------------------------------------
     # Settlement
     # ------------------------------------------------------------------
@@ -352,6 +485,11 @@ class OasyceClient:
         items = data.get("escrows", [])
         return [self._parse_escrow(e) for e in items]
 
+    def get_settlement_params(self) -> Dict[str, Any]:
+        """Query the settlement module parameters."""
+        data = self._get("/oasyce/settlement/v1/params")
+        return data.get("params", data)
+
     # ------------------------------------------------------------------
     # Reputation
     # ------------------------------------------------------------------
@@ -375,6 +513,11 @@ class OasyceClient:
         data = self._get("/oasyce/reputation/v1/leaderboard")
         items = data.get("scores", [])
         return [self._parse_reputation(r) for r in items]
+
+    def get_reputation_params(self) -> Dict[str, Any]:
+        """Query the reputation module parameters."""
+        data = self._get("/oasyce/reputation/v1/params")
+        return data.get("params", data)
 
     # ------------------------------------------------------------------
     # Work
@@ -433,6 +576,42 @@ class OasyceClient:
         items = data.get("executors", [])
         return [self._parse_executor(e) for e in items]
 
+    def get_executor(self, address: str) -> Executor:
+        """Query a single executor profile by address."""
+        data = self._get(f"/oasyce/work/v1/executor/{address}")
+        self._check_not_found(data, "Executor", address)
+        return self._parse_executor(data.get("executor", data))
+
+    def list_tasks_by_creator(self, creator: str) -> List[Task]:
+        """List tasks submitted by a specific creator."""
+        data = self._get(f"/oasyce/work/v1/tasks/creator/{creator}")
+        items = data.get("tasks", [])
+        return [self._parse_task(t) for t in items]
+
+    def list_tasks_by_executor(self, executor: str) -> List[Task]:
+        """List tasks assigned to a specific executor."""
+        data = self._get(f"/oasyce/work/v1/tasks/executor/{executor}")
+        items = data.get("tasks", [])
+        return [self._parse_task(t) for t in items]
+
+    def get_work_params(self) -> Dict[str, Any]:
+        """Query the work module parameters."""
+        data = self._get("/oasyce/work/v1/params")
+        return data.get("params", data)
+
+    def get_epoch_stats(self, epoch: int) -> EpochStats:
+        """Query epoch statistics for the work module."""
+        data = self._get(f"/oasyce/work/v1/epoch/{epoch}")
+        self._check_not_found(data, "EpochStats", str(epoch))
+        stats = data.get("stats", data)
+        return EpochStats(
+            epoch=_safe_int(stats.get("epoch", epoch)),
+            tasks_submitted=_safe_int(stats.get("tasks_submitted")),
+            tasks_settled=_safe_int(stats.get("tasks_settled")),
+            total_bounty_uoas=_safe_int(stats.get("total_bounty")),
+            total_burned_uoas=_safe_int(stats.get("total_burned")),
+        )
+
     # ------------------------------------------------------------------
     # Onboarding
     # ------------------------------------------------------------------
@@ -469,6 +648,11 @@ class OasyceClient:
             remaining=max(0, airdrop - repaid),
             status=status,
         )
+
+    def get_onboarding_params(self) -> Dict[str, Any]:
+        """Query the onboarding module parameters."""
+        data = self._get("/oasyce/onboarding/v1/params")
+        return data.get("params", data)
 
     # ------------------------------------------------------------------
     # Bank / Auth / Tendermint (Cosmos SDK)
@@ -634,6 +818,360 @@ class OasyceClient:
         )
         return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
 
+    # --- Capability: challenge window ---
+
+    def build_complete_invocation(
+        self,
+        sender: str,
+        invocation_id: str,
+        output_hash: str,
+        usage_report: str = "",
+    ) -> dict:
+        """Build an unsigned MsgCompleteInvocation (starts challenge window)."""
+        msg = self._cosmos_msg(
+            "/oasyce.capability.v1.MsgCompleteInvocation",
+            {
+                "creator": sender,
+                "invocation_id": invocation_id,
+                "output_hash": output_hash,
+                "usage_report": usage_report,
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_fail_invocation(
+        self, sender: str, invocation_id: str,
+    ) -> dict:
+        """Build an unsigned MsgFailInvocation."""
+        msg = self._cosmos_msg(
+            "/oasyce.capability.v1.MsgFailInvocation",
+            {"creator": sender, "invocation_id": invocation_id},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_claim_invocation(
+        self, sender: str, invocation_id: str,
+    ) -> dict:
+        """Build an unsigned MsgClaimInvocation (after challenge window)."""
+        msg = self._cosmos_msg(
+            "/oasyce.capability.v1.MsgClaimInvocation",
+            {"creator": sender, "invocation_id": invocation_id},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_dispute_invocation(
+        self, sender: str, invocation_id: str, reason: str,
+    ) -> dict:
+        """Build an unsigned MsgDisputeInvocation (within challenge window)."""
+        msg = self._cosmos_msg(
+            "/oasyce.capability.v1.MsgDisputeInvocation",
+            {
+                "creator": sender,
+                "invocation_id": invocation_id,
+                "reason": reason,
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    # --- Reputation ---
+
+    def build_submit_feedback(
+        self,
+        sender: str,
+        invocation_id: str,
+        rating: int,
+        comment: str = "",
+    ) -> dict:
+        """Build an unsigned MsgSubmitFeedback (rating 0-500)."""
+        msg = self._cosmos_msg(
+            "/oasyce.reputation.v1.MsgSubmitFeedback",
+            {
+                "creator": sender,
+                "invocation_id": invocation_id,
+                "rating": rating,
+                "comment": comment,
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_report_misbehavior(
+        self,
+        sender: str,
+        target: str,
+        evidence_type: str,
+        evidence: bytes = b"",
+    ) -> dict:
+        """Build an unsigned MsgReportMisbehavior."""
+        msg = self._cosmos_msg(
+            "/oasyce.reputation.v1.MsgReportMisbehavior",
+            {
+                "creator": sender,
+                "target": target,
+                "evidence_type": evidence_type,
+                "evidence": base64.b64encode(evidence).decode() if evidence else "",
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    # --- Work (Proof of Useful Work) ---
+
+    def build_register_executor(
+        self,
+        sender: str,
+        task_types: List[str],
+        max_compute_units: int,
+    ) -> dict:
+        """Build an unsigned MsgRegisterExecutor."""
+        msg = self._cosmos_msg(
+            "/oasyce.work.v1.MsgRegisterExecutor",
+            {
+                "executor": sender,
+                "supported_task_types": task_types,
+                "max_compute_units": str(max_compute_units),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_update_executor(
+        self,
+        sender: str,
+        task_types: Optional[List[str]] = None,
+        max_compute_units: Optional[int] = None,
+        active: Optional[bool] = None,
+    ) -> dict:
+        """Build an unsigned MsgUpdateExecutor."""
+        value: Dict[str, Any] = {"executor": sender}
+        if task_types is not None:
+            value["supported_task_types"] = task_types
+        if max_compute_units is not None:
+            value["max_compute_units"] = str(max_compute_units)
+        if active is not None:
+            value["active"] = active
+        msg = self._cosmos_msg("/oasyce.work.v1.MsgUpdateExecutor", value)
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_submit_task(
+        self,
+        sender: str,
+        task_type: str,
+        input_hash: bytes,
+        input_uri: str,
+        max_compute_units: int,
+        bounty_uoas: int,
+        redundancy: int = 1,
+        timeout_blocks: int = 100,
+    ) -> dict:
+        """Build an unsigned MsgSubmitTask."""
+        msg = self._cosmos_msg(
+            "/oasyce.work.v1.MsgSubmitTask",
+            {
+                "creator": sender,
+                "task_type": task_type,
+                "input_hash": base64.b64encode(input_hash).decode(),
+                "input_uri": input_uri,
+                "max_compute_units": str(max_compute_units),
+                "bounty": self._coin(bounty_uoas),
+                "redundancy": redundancy,
+                "timeout_blocks": str(timeout_blocks),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_commit_result(
+        self,
+        sender: str,
+        task_id: int,
+        commit_hash: bytes,
+    ) -> dict:
+        """Build an unsigned MsgCommitResult."""
+        msg = self._cosmos_msg(
+            "/oasyce.work.v1.MsgCommitResult",
+            {
+                "executor": sender,
+                "task_id": str(task_id),
+                "commit_hash": base64.b64encode(commit_hash).decode(),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_reveal_result(
+        self,
+        sender: str,
+        task_id: int,
+        output_hash: bytes,
+        output_uri: str,
+        compute_units_used: int,
+        salt: bytes,
+        unavailable: bool = False,
+    ) -> dict:
+        """Build an unsigned MsgRevealResult."""
+        msg = self._cosmos_msg(
+            "/oasyce.work.v1.MsgRevealResult",
+            {
+                "executor": sender,
+                "task_id": str(task_id),
+                "output_hash": base64.b64encode(output_hash).decode(),
+                "output_uri": output_uri,
+                "compute_units_used": str(compute_units_used),
+                "salt": base64.b64encode(salt).decode(),
+                "unavailable": unavailable,
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_dispute_result(
+        self,
+        sender: str,
+        task_id: int,
+        reason: str,
+        bond_uoas: int,
+    ) -> dict:
+        """Build an unsigned MsgDisputeResult."""
+        msg = self._cosmos_msg(
+            "/oasyce.work.v1.MsgDisputeResult",
+            {
+                "challenger": sender,
+                "task_id": str(task_id),
+                "reason": reason,
+                "bond": self._coin(bond_uoas),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    # --- Settlement ---
+
+    def build_create_escrow(
+        self,
+        sender: str,
+        amount_uoas: int,
+        capability_id: str = "",
+        asset_id: str = "",
+    ) -> dict:
+        """Build an unsigned MsgCreateEscrow."""
+        msg = self._cosmos_msg(
+            "/oasyce.settlement.v1.MsgCreateEscrow",
+            {
+                "creator": sender,
+                "capability_id": capability_id,
+                "asset_id": asset_id,
+                "amount": self._coin(amount_uoas),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_release_escrow(self, sender: str, escrow_id: str) -> dict:
+        """Build an unsigned MsgReleaseEscrow."""
+        msg = self._cosmos_msg(
+            "/oasyce.settlement.v1.MsgReleaseEscrow",
+            {"creator": sender, "escrow_id": escrow_id},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_refund_escrow(self, sender: str, escrow_id: str) -> dict:
+        """Build an unsigned MsgRefundEscrow."""
+        msg = self._cosmos_msg(
+            "/oasyce.settlement.v1.MsgRefundEscrow",
+            {"creator": sender, "escrow_id": escrow_id},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    # --- Onboarding ---
+
+    def build_self_register(self, sender: str, nonce: int) -> dict:
+        """Build an unsigned MsgSelfRegister (after solving PoW)."""
+        msg = self._cosmos_msg(
+            "/oasyce.onboarding.v1.MsgSelfRegister",
+            {"creator": sender, "nonce": str(nonce)},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_repay_debt(self, sender: str, amount_uoas: int) -> dict:
+        """Build an unsigned MsgRepayDebt."""
+        msg = self._cosmos_msg(
+            "/oasyce.onboarding.v1.MsgRepayDebt",
+            {"creator": sender, "amount": str(amount_uoas)},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    # --- Datarights: disputes, lifecycle, migration ---
+
+    def build_file_dispute(
+        self,
+        sender: str,
+        asset_id: str,
+        reason: str,
+        evidence: bytes = b"",
+        remedy: str = "DISPUTE_REMEDY_DELIST",
+    ) -> dict:
+        """Build an unsigned MsgFileDispute."""
+        msg = self._cosmos_msg(
+            "/oasyce.datarights.v1.MsgFileDispute",
+            {
+                "creator": sender,
+                "asset_id": asset_id,
+                "reason": reason,
+                "evidence": base64.b64encode(evidence).decode() if evidence else "",
+                "requested_remedy": remedy,
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_initiate_shutdown(self, sender: str, asset_id: str) -> dict:
+        """Build an unsigned MsgInitiateShutdown (owner graceful shutdown)."""
+        msg = self._cosmos_msg(
+            "/oasyce.datarights.v1.MsgInitiateShutdown",
+            {"creator": sender, "asset_id": asset_id},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_claim_settlement(self, sender: str, asset_id: str) -> dict:
+        """Build an unsigned MsgClaimSettlement (pro-rata reserve payout after shutdown)."""
+        msg = self._cosmos_msg(
+            "/oasyce.datarights.v1.MsgClaimSettlement",
+            {"creator": sender, "asset_id": asset_id},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_create_migration(
+        self,
+        sender: str,
+        source_asset_id: str,
+        target_asset_id: str,
+        exchange_rate_bps: int,
+        max_migrated_shares: int,
+    ) -> dict:
+        """Build an unsigned MsgCreateMigrationPath."""
+        msg = self._cosmos_msg(
+            "/oasyce.datarights.v1.MsgCreateMigrationPath",
+            {
+                "creator": sender,
+                "source_asset_id": source_asset_id,
+                "target_asset_id": target_asset_id,
+                "exchange_rate_bps": exchange_rate_bps,
+                "max_migrated_shares": str(max_migrated_shares),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_migrate(
+        self,
+        sender: str,
+        source_asset_id: str,
+        target_asset_id: str,
+        shares: int,
+    ) -> dict:
+        """Build an unsigned MsgMigrate (burns source shares, mints target)."""
+        msg = self._cosmos_msg(
+            "/oasyce.datarights.v1.MsgMigrate",
+            {
+                "creator": sender,
+                "source_asset_id": source_asset_id,
+                "target_asset_id": target_asset_id,
+                "shares": str(shares),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
     def broadcast_tx(self, signed_tx: dict) -> TxResult:
         """Broadcast a signed transaction to the chain.
 
@@ -692,6 +1230,32 @@ class OasyceClient:
             return block.height > 0
         except (ConnectionError, TimeoutError, HTTPError, Exception):
             return False
+
+    @staticmethod
+    def solve_pow(address: str, difficulty: int = 16) -> PowResult:
+        """Solve a proof-of-work puzzle for self-registration.
+
+        Finds a nonce such that ``sha256(address || nonce_le_bytes)`` has at
+        least *difficulty* leading zero bits.  Matches the Go chain verifier
+        exactly (little-endian uint64 nonce appended to address string bytes).
+        """
+        nonce = random.randint(0, 2**64 - 1)
+        addr_bytes = address.encode()
+        attempts = 0
+
+        while True:
+            data = addr_bytes + struct.pack("<Q", nonce)
+            h = hashlib.sha256(data).digest()
+            if _leading_zero_bits(h) >= difficulty:
+                return PowResult(
+                    address=address,
+                    nonce=nonce,
+                    difficulty=difficulty,
+                    hash_hex=h.hex(),
+                    attempts=attempts,
+                )
+            nonce = (nonce + 1) & 0xFFFFFFFFFFFFFFFF
+            attempts += 1
 
     @staticmethod
     def oas_to_uoas(oas: float) -> int:

@@ -19,6 +19,7 @@ from .errors import (
     ValidationError,
 )
 from .types import (
+    AccessLevel,
     Account,
     Balance,
     Block,
@@ -26,9 +27,14 @@ from .types import (
     Capability,
     DataAsset,
     Debt,
+    Dispute,
     Earnings,
+    EpochStats,
     Escrow,
     Executor,
+    Invocation,
+    MigrationPath,
+    PowResult,
     Registration,
     Reputation,
     ShareHolder,
@@ -36,7 +42,7 @@ from .types import (
     TxResult,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "OasyceClient",
@@ -50,6 +56,7 @@ __all__ = [
     "TimeoutError",
     "ValidationError",
     # Types
+    "AccessLevel",
     "Account",
     "Balance",
     "Block",
@@ -57,9 +64,14 @@ __all__ = [
     "Capability",
     "DataAsset",
     "Debt",
+    "Dispute",
     "Earnings",
+    "EpochStats",
     "Escrow",
     "Executor",
+    "Invocation",
+    "MigrationPath",
+    "PowResult",
     "Registration",
     "Reputation",
     "ShareHolder",

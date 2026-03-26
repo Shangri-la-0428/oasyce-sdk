@@ -202,3 +202,87 @@ class TxResult:
     code: int
     raw_log: str
     success: bool
+
+
+# ---------------------------------------------------------------------------
+# Capability Invocations
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Invocation:
+    """A capability invocation record."""
+    invocation_id: str
+    capability_id: str
+    consumer: str
+    provider: str
+    status: str  # PENDING, COMPLETED, SUCCESS, DISPUTED, FAILED
+    input_hash: str = ""
+    output_hash: str = ""
+    completed_height: int = 0
+    usage_report: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Data Rights — Access, Disputes, Migration
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AccessLevel:
+    """Access level for an address on a data asset."""
+    asset_id: str
+    address: str
+    level: str  # L0, L1, L2, L3, or ""
+    equity_bps: int
+    shares: int
+    total_shares: int
+
+
+@dataclass(frozen=True)
+class Dispute:
+    """A data rights dispute."""
+    dispute_id: str
+    asset_id: str
+    creator: str
+    reason: str
+    status: str
+    remedy: str
+
+
+@dataclass(frozen=True)
+class MigrationPath:
+    """A migration path between two data asset versions."""
+    source_asset_id: str
+    target_asset_id: str
+    creator: str
+    exchange_rate_bps: int
+    max_migrated_shares: int
+    migrated_shares: int
+    enabled: bool
+
+
+# ---------------------------------------------------------------------------
+# Work — Epoch Statistics
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class EpochStats:
+    """Epoch statistics for the work module."""
+    epoch: int
+    tasks_submitted: int
+    tasks_settled: int
+    total_bounty_uoas: int
+    total_burned_uoas: int
+
+
+# ---------------------------------------------------------------------------
+# PoW
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PowResult:
+    """Result of solving a proof-of-work puzzle."""
+    address: str
+    nonce: int
+    difficulty: int
+    hash_hex: str
+    attempts: int

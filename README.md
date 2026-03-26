@@ -63,6 +63,19 @@ earnings = client.get_earnings("oasyce1abc...")
 print(f"累计收入 {client.uoas_to_oas(earnings.total_earned_uoas)} OAS, 共 {earnings.total_calls} 次调用")
 ```
 
+#### `get_invocation(invocation_id) -> Invocation`
+
+查询单个调用记录（含状态、挑战窗口、使用报告）。
+
+```python
+inv = client.get_invocation("INV_0000000000000001")
+print(inv.status, inv.output_hash, inv.usage_report)
+```
+
+#### `get_capability_params() -> dict`
+
+查询能力模块参数。
+
 ---
 
 ### 数据资产 (Data Assets)
@@ -103,6 +116,31 @@ bc = client.get_bonding_curve("asset-001")
 print(f"现价: {bc.spot_price_uoas} uoas, 储备: {bc.reserve_uoas} uoas")
 ```
 
+#### `get_access_level(asset_id, address) -> AccessLevel`
+
+查询地址在数据资产上的访问等级（L0-L3）。
+
+```python
+al = client.get_access_level("asset-001", "oasyce1buyer...")
+print(f"等级: {al.level}, 持股: {al.equity_bps} bps")
+```
+
+#### `get_dispute(dispute_id) -> Dispute` / `list_disputes(asset_id=None) -> list[Dispute]`
+
+查询争议。
+
+#### `get_migration_path(source_id, target_id) -> MigrationPath`
+
+查询两个资产版本之间的迁移路径。
+
+#### `get_asset_children(asset_id) -> list[DataAsset]`
+
+查询资产的子版本（fork）。
+
+#### `get_datarights_params() -> dict`
+
+查询数据权益模块参数。
+
 ---
 
 ### 结算 (Settlement)
@@ -124,6 +162,10 @@ print(esc.status)  # LOCKED, RELEASED, REFUNDED, EXPIRED
 escrows = client.list_escrows("oasyce1abc...")
 locked = [e for e in escrows if e.status == "LOCKED"]
 ```
+
+#### `get_settlement_params() -> dict`
+
+查询结算模块参数。
 
 ---
 
@@ -147,6 +189,10 @@ lb = client.get_leaderboard()
 for entry in lb[:5]:
     print(f"{entry.address}: {entry.score}")
 ```
+
+#### `get_reputation_params() -> dict`
+
+查询信誉模块参数。
 
 ---
 
@@ -178,6 +224,18 @@ for ex in client.list_executors():
     print(f"{ex.address}: 已完成 {ex.tasks_completed} 个任务, 活跃={ex.active}")
 ```
 
+#### `get_executor(address) -> Executor`
+
+查询单个执行者。
+
+#### `list_tasks_by_creator(creator) -> list[Task]` / `list_tasks_by_executor(executor) -> list[Task]`
+
+按创建者或执行者过滤任务。
+
+#### `get_work_params() -> dict` / `get_epoch_stats(epoch) -> EpochStats`
+
+查询工作模块参数和纪元统计。
+
 ---
 
 ### 注册 (Onboarding)
@@ -199,6 +257,10 @@ print(f"空投: {reg.airdrop_amount} uoas, 已还: {reg.repaid_amount} uoas")
 debt = client.get_debt("oasyce1new...")
 print(f"剩余: {debt.remaining} uoas ({debt.status})")
 ```
+
+#### `get_onboarding_params() -> dict`
+
+查询注册模块参数（PoW 难度、空投金额等）。
 
 ---
 
@@ -233,54 +295,82 @@ print(f"高度 {block.height}, 链 {block.chain_id}")
 
 ---
 
-### 交易构建器
+### PoW 求解器
 
-这些方法生成未签名的交易 JSON。签名后传给 `broadcast_tx()` 广播。
+#### `solve_pow(address, difficulty=16) -> PowResult`
 
-#### `build_register_capability(sender, name, endpoint, price_uoas, tags=None) -> dict`
-
-```python
-tx = client.build_register_capability(
-    sender="oasyce1abc...",
-    name="My LLM",
-    endpoint="https://api.example.com/v1",
-    price_uoas=5000,
-    tags=["llm", "gpt"],
-)
-```
-
-#### `build_invoke_capability(sender, capability_id, input_data=None) -> dict`
+纯 Python PoW 求解器，与链上 Go 验证器完全一致。
 
 ```python
-tx = client.build_invoke_capability(
-    sender="oasyce1consumer...",
-    capability_id="cap-001",
-    input_data=b'{"prompt": "hello"}',
-)
+result = OasyceClient.solve_pow("oasyce1abc...", difficulty=16)
+print(f"Nonce: {result.nonce}, 尝试: {result.attempts} 次")
+
+# 然后注册
+tx = client.build_self_register("oasyce1abc...", result.nonce)
 ```
 
-#### `build_register_asset(sender, name, content_hash, tags=None) -> dict`
+---
 
-```python
-tx = client.build_register_asset(
-    sender="oasyce1owner...",
-    name="Training Dataset v1",
-    content_hash="sha256:abc123",
-    tags=["ml", "nlp"],
-)
-```
+### 交易构建器 (27 个)
 
-#### `build_buy_shares(sender, asset_id, amount_uoas) -> dict`
+所有 `build_*` 方法生成未签名的 Cosmos SDK 交易 JSON。签名后传给 `broadcast_tx()` 广播。
 
-```python
-tx = client.build_buy_shares("oasyce1buyer...", "asset-001", 100000)
-```
+#### 能力市场
 
-#### `build_sell_shares(sender, asset_id, shares) -> dict`
+| 方法 | 说明 |
+|------|------|
+| `build_register_capability(sender, name, endpoint, price_uoas, ...)` | 注册 AI 能力 |
+| `build_invoke_capability(sender, capability_id, input_data)` | 调用能力（自动托管） |
+| `build_complete_invocation(sender, invocation_id, output_hash, usage_report)` | 提交输出（开始挑战窗口） |
+| `build_fail_invocation(sender, invocation_id)` | 标记调用失败 |
+| `build_claim_invocation(sender, invocation_id)` | 挑战窗口后领取付款 |
+| `build_dispute_invocation(sender, invocation_id, reason)` | 挑战窗口内争议 |
 
-```python
-tx = client.build_sell_shares("oasyce1seller...", "asset-001", 500)
-```
+#### 数据权益
+
+| 方法 | 说明 |
+|------|------|
+| `build_register_asset(sender, name, content_hash, ...)` | 注册数据资产 |
+| `build_buy_shares(sender, asset_id, amount_uoas)` | 买入股份（Bancor 曲线） |
+| `build_sell_shares(sender, asset_id, shares)` | 卖出股份（反向曲线） |
+| `build_file_dispute(sender, asset_id, reason, evidence, remedy)` | 提起争议 |
+| `build_initiate_shutdown(sender, asset_id)` | 发起关停（7天冷却期） |
+| `build_claim_settlement(sender, asset_id)` | 关停后按比例领取储备金 |
+| `build_create_migration(sender, source_id, target_id, rate_bps, max_shares)` | 创建迁移路径 |
+| `build_migrate(sender, source_id, target_id, shares)` | 执行跨版本迁移 |
+
+#### 结算
+
+| 方法 | 说明 |
+|------|------|
+| `build_create_escrow(sender, amount_uoas, capability_id, asset_id)` | 创建托管 |
+| `build_release_escrow(sender, escrow_id)` | 释放托管（90/5/2/3 分账） |
+| `build_refund_escrow(sender, escrow_id)` | 退款托管 |
+
+#### 信誉
+
+| 方法 | 说明 |
+|------|------|
+| `build_submit_feedback(sender, invocation_id, rating, comment)` | 提交评价（0-500） |
+| `build_report_misbehavior(sender, target, evidence_type, evidence)` | 举报不良行为 |
+
+#### 工作证明 (PoUW)
+
+| 方法 | 说明 |
+|------|------|
+| `build_register_executor(sender, task_types, max_cu)` | 注册执行者 |
+| `build_update_executor(sender, task_types, max_cu, active)` | 更新执行者 |
+| `build_submit_task(sender, task_type, input_hash, input_uri, max_cu, bounty_uoas)` | 提交计算任务 |
+| `build_commit_result(sender, task_id, commit_hash)` | 提交结果承诺 |
+| `build_reveal_result(sender, task_id, output_hash, output_uri, cu_used, salt)` | 揭示结果 |
+| `build_dispute_result(sender, task_id, reason, bond_uoas)` | 争议结果 |
+
+#### 注册
+
+| 方法 | 说明 |
+|------|------|
+| `build_self_register(sender, nonce)` | PoW 自注册 |
+| `build_repay_debt(sender, amount_uoas)` | 偿还空投债务 |
 
 #### `broadcast_tx(signed_tx) -> TxResult`
 
