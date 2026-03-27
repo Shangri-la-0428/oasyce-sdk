@@ -175,6 +175,7 @@ class TestDataAssets(unittest.TestCase):
                     "status": "ASSET_STATUS_ACTIVE",
                     "version": 1,
                     "parent_asset_id": "",
+                    "service_url": "https://api.example.com/data/v1",
                 },
             ]
         })
@@ -185,6 +186,7 @@ class TestDataAssets(unittest.TestCase):
         self.assertEqual(assets[0].rights_type, "ORIGINAL")
         self.assertEqual(assets[0].status, "ACTIVE")
         self.assertEqual(assets[0].total_shares, 1000)
+        self.assertEqual(assets[0].service_url, "https://api.example.com/data/v1")
 
     @patch.object(requests.Session, "get")
     def test_list_assets_filtered(self, mock_get):
@@ -756,11 +758,43 @@ class TestTxBuilders(unittest.TestCase):
             content_hash="sha256:abc123def",
             tags=["ml", "nlp"],
             description="NLP training data",
+            service_url="https://data.example.com/v1",
         )
         msg = tx["body"]["messages"][0]
         self.assertEqual(msg["@type"], "/oasyce.datarights.v1.MsgRegisterDataAsset")
         self.assertEqual(msg["content_hash"], "sha256:abc123def")
         self.assertEqual(msg["tags"], ["ml", "nlp"])
+        self.assertEqual(msg["service_url"], "https://data.example.com/v1")
+
+    def test_build_register_asset_no_service_url(self):
+        tx = self.client.build_register_asset(
+            sender="oasyce1owner",
+            name="Dataset",
+            content_hash="sha256:xyz",
+        )
+        msg = tx["body"]["messages"][0]
+        self.assertEqual(msg["service_url"], "")
+
+    def test_build_update_service_url(self):
+        tx = self.client.build_update_service_url(
+            sender="oasyce1owner",
+            asset_id="asset-001",
+            service_url="https://new-endpoint.com/data",
+        )
+        msg = tx["body"]["messages"][0]
+        self.assertEqual(msg["@type"], "/oasyce.datarights.v1.MsgUpdateServiceUrl")
+        self.assertEqual(msg["creator"], "oasyce1owner")
+        self.assertEqual(msg["asset_id"], "asset-001")
+        self.assertEqual(msg["service_url"], "https://new-endpoint.com/data")
+
+    def test_build_update_service_url_clear(self):
+        tx = self.client.build_update_service_url(
+            sender="oasyce1owner",
+            asset_id="asset-001",
+            service_url="",
+        )
+        msg = tx["body"]["messages"][0]
+        self.assertEqual(msg["service_url"], "")
 
     def test_build_buy_shares(self):
         tx = self.client.build_buy_shares(

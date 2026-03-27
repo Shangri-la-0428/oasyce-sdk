@@ -334,6 +334,7 @@ class OasyceClient:
             status=status,
             version=_safe_int(raw.get("version", 1)),
             parent_asset_id=raw.get("parent_asset_id", ""),
+            service_url=raw.get("service_url", ""),
         )
 
     def list_assets(
@@ -767,6 +768,7 @@ class OasyceClient:
         tags: Optional[List[str]] = None,
         description: str = "",
         rights_type: str = "RIGHTS_TYPE_ORIGINAL",
+        service_url: str = "",
     ) -> dict:
         """Build an unsigned MsgRegisterDataAsset transaction body."""
         msg = self._cosmos_msg(
@@ -780,6 +782,24 @@ class OasyceClient:
                 "tags": tags or [],
                 "co_creators": [],
                 "parent_asset_id": "",
+                "service_url": service_url,
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_update_service_url(
+        self,
+        sender: str,
+        asset_id: str,
+        service_url: str,
+    ) -> dict:
+        """Build an unsigned MsgUpdateServiceUrl transaction body."""
+        msg = self._cosmos_msg(
+            "/oasyce.datarights.v1.MsgUpdateServiceUrl",
+            {
+                "creator": sender,
+                "asset_id": asset_id,
+                "service_url": service_url,
             },
         )
         return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}

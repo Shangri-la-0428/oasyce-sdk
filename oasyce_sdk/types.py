@@ -60,6 +60,7 @@ class DataAsset:
     status: str  # ACTIVE, SHUTTING_DOWN, SETTLED
     version: int
     parent_asset_id: str
+    service_url: str = ""  # mutable endpoint where buyers access data
 
 
 @dataclass(frozen=True)

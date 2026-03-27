@@ -292,16 +292,17 @@ def list_data_assets(tag: str = "") -> str:
         assets = _client.list_assets(tag=tag if tag else None)
         result = []
         for a in assets:
-            result.append(
-                {
-                    "id": a.id,
-                    "name": a.name,
-                    "owner": a.owner,
-                    "status": a.status,
-                    "total_shares": a.total_shares,
-                    "tags": a.tags,
-                }
-            )
+            entry = {
+                "id": a.id,
+                "name": a.name,
+                "owner": a.owner,
+                "status": a.status,
+                "total_shares": a.total_shares,
+                "tags": a.tags,
+            }
+            if a.service_url:
+                entry["service_url"] = a.service_url
+            result.append(entry)
         return json.dumps({"data_assets": result, "count": len(result)}, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
