@@ -15,9 +15,44 @@ pip install oasyce-sdk[langchain] # + LangChain Tools
 pip install oasyce-sdk[all]       # 全部
 ```
 
+## 原生签名（v0.5.0 新增）
+
+**零 Go 依赖。** 纯 Python 创建钱包、签名交易、广播上链：
+
+```python
+from oasyce_sdk import OasyceClient
+from oasyce_sdk.crypto import Wallet, NativeSigner
+
+# 创建钱包
+wallet = Wallet.create()
+print(wallet.address)   # oasyce1...
+print(wallet.mnemonic)  # 24 词助记词，务必保存
+
+# 连接链 + 签名
+client = OasyceClient("http://47.93.32.88:1317")
+signer = NativeSigner(wallet, client, chain_id="oasyce-testnet-1")
+
+# 注册 AI 能力 — 一行代码，自动编码+签名+广播
+result = signer.register_capability(
+    name="My AI Service",
+    endpoint="https://my-api.com/invoke",
+    price_uoas=500000,  # 0.5 OAS/次
+    tags=["nlp", "summarization"],
+)
+print(result.tx_hash, result.success)
+
+# 买数据资产股份
+signer.buy_shares("DATA_0000000000000001", amount_uoas=100000)
+
+# 提交评价
+signer.submit_feedback("INV_0000000000000001", rating=5, comment="fast")
+```
+
+支持全部 33 种链上消息类型。内部使用 secp256k1 签名 + 手写 protobuf 编码，无 `protoc` / `protobuf` 库依赖。
+
 ## MCP Server
 
-让你的 AI 助手（Claude Desktop / Cursor / Windsurf）直接操作 Oasyce 链。
+让你的 AI 助手（Claude Desktop / Cursor / Windsurf）直接操作 Oasyce 链。25 个工具（11 读 + 14 写）。
 
 配置 `claude_desktop_config.json`：
 
@@ -28,26 +63,31 @@ pip install oasyce-sdk[all]       # 全部
       "command": "oasyce-mcp",
       "env": {
         "OASYCE_NODE": "http://47.93.32.88:1317",
-        "OASYCE_FAUCET": "http://47.93.32.88:8080"
+        "OASYCE_FAUCET": "http://47.93.32.88:8080",
+        "OASYCE_MNEMONIC": "your 24 word mnemonic here"
       }
     }
   }
 }
 ```
 
-提供 10 个工具：健康检查、领水龙头、查余额、查 agent 档案、浏览市场、列出能力、查信誉、查数据资产、查开放任务、提 issue。
+**读工具**：健康检查、领水龙头、查余额、查 agent 档案、浏览市场、列出能力、查信誉、查数据资产、查开放任务、提 issue。
+
+**写工具**（需要 `OASYCE_MNEMONIC`）：创建钱包、转账、自注册、注册能力、调用能力、完成/领取/争议调用、注册数据资产、买卖股份、提交评价、注册执行者。
 
 ## LangChain Tools
 
 ```python
-from oasyce_sdk.langchain_tools import oasyce_tools
+from oasyce_sdk.langchain_tools import oasyce_tools  # 18 个工具（8 读 + 10 写）
 from langchain.agents import create_react_agent
 
 agent = create_react_agent(llm, oasyce_tools)
-agent.invoke({"input": "浏览 Oasyce 市场上有什么 AI 服务"})
+agent.invoke({"input": "注册一个 AI 翻译服务，0.5 OAS/次"})
 ```
 
-## 快速开始（SDK）
+写工具需要设置 `OASYCE_MNEMONIC` 环境变量。也可以只导入读工具：`from oasyce_sdk.langchain_tools import oasyce_read_tools`
+
+## 快速开始（只读查询）
 
 ```python
 from oasyce_sdk import OasyceClient
@@ -445,35 +485,15 @@ OasyceClient.uoas_to_oas(2500000)  # 2.5
 
 ---
 
-## AHRP 适配器（v0.3.0）
+## AHRP 适配器
 
-`SigningBridge` 将 SDK 的 TX 构建器与 `oasyced` CLI 签名结合，实现一步到位的交易广播：
+> **注意**：`SigningBridge`（依赖 Go 二进制 `oasyced`）已被 `NativeSigner` 取代。新项目请使用 `NativeSigner`。
 
-```python
-from oasyce_sdk import OasyceClient, SigningBridge
-
-client = OasyceClient("http://localhost:1317")
-bridge = SigningBridge(
-    client=client,
-    oasyced_path="./oasyced",
-    key_name="my-agent",
-    chain_id="oasyce-testnet-1",
-    node="tcp://localhost:26657",
-)
-
-# 构建 + 签名 + 广播
-result = bridge.create_escrow(amount_uoas=50000, asset_id="DATA_001")
-print(result.tx_hash, result.success)
-```
-
-`AhrpChainAdapter` 将 `SigningBridge` 适配为 Plugin Engine AHRP Executor 期望的接口，**无需修改任何 AHRP 代码**：
+`AhrpChainAdapter` 将签名层适��为 Plugin Engine AHRP Executor 期望的接口：
 
 ```python
 from oasyce_sdk import AhrpChainAdapter
-
-adapter = AhrpChainAdapter(bridge)
-# 直接传入 AHRP Executor:
-# executor = AHRPExecutor(chain_client=adapter)
+# adapter = AhrpChainAdapter(bridge)
 ```
 
 完整示例见 `examples/ahrp_two_agent_demo.py`。
@@ -522,7 +542,7 @@ OasyceError
 - **Protobuf 枚举映射** —— `ESCROW_STATUS_LOCKED` 自动变成 `"LOCKED"`
 - **交易构建器** —— 正确的消息结构，不需要读 proto 文件
 - **线程安全** —— 无全局状态，内部使用 `requests.Session`
-- **单一依赖** —— 只需 `requests>=2.28`，无需编译 protobuf
+- **轻量依赖** —— `requests` + `coincurve` + `mnemonic`，无需 `protobuf` 库或 Go 二进制
 
 ## 生态链接
 

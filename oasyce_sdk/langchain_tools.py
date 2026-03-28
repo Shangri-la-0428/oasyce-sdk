@@ -202,8 +202,223 @@ class OasyceReportIssue(BaseTool):
             return json.dumps({"error": str(e)})
 
 
-# Convenience list for agent setup
-oasyce_tools: List[BaseTool] = [
+# ---------------------------------------------------------------------------
+# Write tools — require OASYCE_MNEMONIC env var
+# ---------------------------------------------------------------------------
+
+_signer = None
+
+
+def _get_signer():
+    global _signer
+    if _signer is not None:
+        return _signer
+    mnemonic = os.environ.get("OASYCE_MNEMONIC", "")
+    if not mnemonic:
+        raise ValueError("OASYCE_MNEMONIC not set. Generate with Wallet.create().")
+    from .crypto import Wallet, NativeSigner
+    wallet = Wallet.from_mnemonic(mnemonic)
+    chain_id = os.environ.get("OASYCE_CHAIN_ID", "oasyce-testnet-1")
+    _signer = NativeSigner(wallet, _client, chain_id=chain_id)
+    return _signer
+
+
+def _tx_json(result) -> str:
+    return json.dumps({
+        "tx_hash": result.tx_hash, "success": result.success,
+        "code": result.code, "raw_log": result.raw_log if not result.success else "",
+    })
+
+
+class CreateWalletInput(BaseModel):
+    pass
+
+
+class SendTokensInput(BaseModel):
+    to_address: str = Field(description="Recipient oasyce1... address")
+    amount_uoas: int = Field(description="Amount in uoas (1 OAS = 1,000,000 uoas)")
+
+
+class RegisterCapabilityInput(BaseModel):
+    name: str = Field(description="Service name")
+    endpoint: str = Field(description="HTTP endpoint URL")
+    price_uoas: int = Field(description="Price per call in uoas")
+    tags: str = Field(default="", description="Comma-separated tags")
+    description: str = Field(default="", description="Service description")
+
+
+class InvokeCapabilityInput(BaseModel):
+    capability_id: str = Field(description="Capability ID (e.g. CAP_0000000000000001)")
+    input_data: str = Field(default="", description="Optional input string")
+
+
+class InvocationIdInput(BaseModel):
+    invocation_id: str = Field(description="Invocation ID")
+
+
+class DisputeInvocationInput(BaseModel):
+    invocation_id: str = Field(description="Invocation ID")
+    reason: str = Field(description="Dispute reason")
+
+
+class RegisterAssetInput(BaseModel):
+    name: str = Field(description="Asset name")
+    content_hash: str = Field(description="SHA256 hash of content")
+    tags: str = Field(default="", description="Comma-separated tags")
+    description: str = Field(default="", description="Asset description")
+    service_url: str = Field(default="", description="Data access URL")
+
+
+class AssetAmountInput(BaseModel):
+    asset_id: str = Field(description="Data asset ID")
+    amount_uoas: int = Field(description="Amount in uoas")
+
+
+class AssetSharesInput(BaseModel):
+    asset_id: str = Field(description="Data asset ID")
+    shares: int = Field(description="Number of shares")
+
+
+class FeedbackInput(BaseModel):
+    invocation_id: str = Field(description="Invocation ID to rate")
+    rating: int = Field(description="Score 1-5")
+    comment: str = Field(default="", description="Optional text feedback")
+
+
+class OasyceCreateWallet(BaseTool):
+    name: str = "oasyce_create_wallet"
+    description: str = "Generate a new Oasyce wallet. Returns mnemonic + address. SAVE THE MNEMONIC."
+
+    def _run(self) -> str:
+        from .crypto import Wallet
+        w = Wallet.create()
+        return json.dumps({"mnemonic": w.mnemonic, "address": w.address})
+
+
+class OasyceSendTokens(BaseTool):
+    name: str = "oasyce_send_tokens"
+    description: str = "Send OAS tokens. Requires OASYCE_MNEMONIC env var."
+    args_schema: Type[BaseModel] = SendTokensInput
+
+    def _run(self, to_address: str, amount_uoas: int) -> str:
+        try:
+            return _tx_json(_get_signer().send(to_address, amount_uoas))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceRegisterCapability(BaseTool):
+    name: str = "oasyce_register_capability"
+    description: str = (
+        "Register an AI service on Oasyce marketplace. "
+        "Requires OASYCE_MNEMONIC."
+    )
+    args_schema: Type[BaseModel] = RegisterCapabilityInput
+
+    def _run(self, name: str, endpoint: str, price_uoas: int,
+             tags: str = "", description: str = "") -> str:
+        try:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+            return _tx_json(_get_signer().register_capability(
+                name=name, endpoint=endpoint, price_uoas=price_uoas,
+                tags=tag_list, description=description,
+            ))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceInvokeCapability(BaseTool):
+    name: str = "oasyce_invoke_capability"
+    description: str = "Invoke an AI service. Payment auto-escrowed. Requires OASYCE_MNEMONIC."
+    args_schema: Type[BaseModel] = InvokeCapabilityInput
+
+    def _run(self, capability_id: str, input_data: str = "") -> str:
+        try:
+            data = input_data.encode() if input_data else None
+            return _tx_json(_get_signer().invoke_capability(capability_id, data))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceClaimInvocation(BaseTool):
+    name: str = "oasyce_claim_invocation"
+    description: str = "Claim payment after challenge window (provider). Requires OASYCE_MNEMONIC."
+    args_schema: Type[BaseModel] = InvocationIdInput
+
+    def _run(self, invocation_id: str) -> str:
+        try:
+            return _tx_json(_get_signer().claim_invocation(invocation_id))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceDisputeInvocation(BaseTool):
+    name: str = "oasyce_dispute_invocation"
+    description: str = "Dispute an invocation within challenge window (consumer). Requires OASYCE_MNEMONIC."
+    args_schema: Type[BaseModel] = DisputeInvocationInput
+
+    def _run(self, invocation_id: str, reason: str) -> str:
+        try:
+            return _tx_json(_get_signer().dispute_invocation(invocation_id, reason))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceRegisterDataAsset(BaseTool):
+    name: str = "oasyce_register_data_asset"
+    description: str = "Register a data asset with Bancor bonding curve. Requires OASYCE_MNEMONIC."
+    args_schema: Type[BaseModel] = RegisterAssetInput
+
+    def _run(self, name: str, content_hash: str, tags: str = "",
+             description: str = "", service_url: str = "") -> str:
+        try:
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+            return _tx_json(_get_signer().register_asset(
+                name=name, content_hash=content_hash, tags=tag_list,
+                description=description, service_url=service_url,
+            ))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceBuyShares(BaseTool):
+    name: str = "oasyce_buy_data_shares"
+    description: str = "Buy shares of a data asset on bonding curve. Requires OASYCE_MNEMONIC."
+    args_schema: Type[BaseModel] = AssetAmountInput
+
+    def _run(self, asset_id: str, amount_uoas: int) -> str:
+        try:
+            return _tx_json(_get_signer().buy_shares(asset_id, amount_uoas))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceSellShares(BaseTool):
+    name: str = "oasyce_sell_data_shares"
+    description: str = "Sell data asset shares back to bonding curve. Requires OASYCE_MNEMONIC."
+    args_schema: Type[BaseModel] = AssetSharesInput
+
+    def _run(self, asset_id: str, shares: int) -> str:
+        try:
+            return _tx_json(_get_signer().sell_shares(asset_id, shares))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+class OasyceSubmitFeedback(BaseTool):
+    name: str = "oasyce_submit_feedback"
+    description: str = "Rate a completed invocation (1-5). Affects provider reputation. Requires OASYCE_MNEMONIC."
+    args_schema: Type[BaseModel] = FeedbackInput
+
+    def _run(self, invocation_id: str, rating: int, comment: str = "") -> str:
+        try:
+            return _tx_json(_get_signer().submit_feedback(invocation_id, rating, comment))
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+
+# Convenience lists
+oasyce_read_tools: List[BaseTool] = [
     OasyceHealthCheck(),
     OasyceGetBalance(),
     OasyceGetFaucetTokens(),
@@ -213,3 +428,18 @@ oasyce_tools: List[BaseTool] = [
     OasyceGetReputation(),
     OasyceReportIssue(),
 ]
+
+oasyce_write_tools: List[BaseTool] = [
+    OasyceCreateWallet(),
+    OasyceSendTokens(),
+    OasyceRegisterCapability(),
+    OasyceInvokeCapability(),
+    OasyceClaimInvocation(),
+    OasyceDisputeInvocation(),
+    OasyceRegisterDataAsset(),
+    OasyceBuyShares(),
+    OasyceSellShares(),
+    OasyceSubmitFeedback(),
+]
+
+oasyce_tools: List[BaseTool] = oasyce_read_tools + oasyce_write_tools

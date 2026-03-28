@@ -1,4 +1,4 @@
-"""Oasyce MCP Server — exposes Oasyce chain operations as MCP tools.
+"""Oasyce MCP Server — 25 tools (11 read + 14 write) for AI agent chain operations.
 
 Install:
     pip install oasyce-sdk[mcp]
@@ -15,11 +15,15 @@ Configure in Claude Desktop / Cursor / Windsurf:
           "command": "oasyce-mcp",
           "env": {
             "OASYCE_NODE": "http://47.93.32.88:1317",
-            "OASYCE_FAUCET": "http://47.93.32.88:8080"
+            "OASYCE_FAUCET": "http://47.93.32.88:8080",
+            "OASYCE_MNEMONIC": "your 24 word mnemonic here"
           }
         }
       }
     }
+
+Write tools (register, invoke, buy, sell, send) require OASYCE_MNEMONIC.
+Read tools work without it. Use create_wallet tool to generate a new mnemonic.
 """
 
 from __future__ import annotations
@@ -45,7 +49,7 @@ FAUCET_URL = os.environ.get("OASYCE_FAUCET", "http://47.93.32.88:8080")
 
 mcp = FastMCP(
     "Oasyce",
-    description=(
+    instructions=(
         "On-chain economic system for AI agents. "
         "Property rights, service contracts, escrow settlement, dispute resolution. "
         "No API key needed. Free testnet tokens."
@@ -357,6 +361,307 @@ def report_issue(title: str, body: str) -> str:
             timeout=15,
         )
         return resp.text
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Write tools — require OASYCE_MNEMONIC env var
+# ---------------------------------------------------------------------------
+
+_signer = None
+
+
+def _get_signer():
+    """Lazy-init NativeSigner from OASYCE_MNEMONIC env var."""
+    global _signer
+    if _signer is not None:
+        return _signer
+
+    mnemonic = os.environ.get("OASYCE_MNEMONIC", "")
+    if not mnemonic:
+        raise ValueError(
+            "OASYCE_MNEMONIC not set. "
+            "Use create_wallet to generate one, then set OASYCE_MNEMONIC env var."
+        )
+
+    from .crypto import Wallet, NativeSigner
+
+    wallet = Wallet.from_mnemonic(mnemonic)
+    chain_id = os.environ.get("OASYCE_CHAIN_ID", "oasyce-testnet-1")
+    _signer = NativeSigner(wallet, _client, chain_id=chain_id)
+    return _signer
+
+
+def _tx_result(result) -> str:
+    """Format a TxResult as JSON."""
+    return json.dumps({
+        "tx_hash": result.tx_hash,
+        "success": result.success,
+        "code": result.code,
+        "raw_log": result.raw_log if not result.success else "",
+    }, indent=2)
+
+
+@mcp.tool()
+def create_wallet() -> str:
+    """Generate a new Oasyce wallet (mnemonic + address).
+
+    SAVE THE MNEMONIC — it cannot be recovered.
+    Set it as OASYCE_MNEMONIC env var to use write tools.
+
+    Returns mnemonic (24 words), address, and public key.
+    """
+    from .crypto import Wallet
+
+    w = Wallet.create()
+    return json.dumps({
+        "mnemonic": w.mnemonic,
+        "address": w.address,
+        "public_key": w.public_key_bytes.hex(),
+        "warning": "Save the mnemonic! Set OASYCE_MNEMONIC to use write tools.",
+    }, indent=2)
+
+
+@mcp.tool()
+def get_my_address() -> str:
+    """Get the address of the currently configured wallet (from OASYCE_MNEMONIC).
+
+    Returns the bech32 address that will be used for all write operations.
+    """
+    try:
+        signer = _get_signer()
+        return json.dumps({
+            "address": signer.wallet.address,
+            "chain_id": signer.chain_id,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def send_tokens(to_address: str, amount_uoas: int) -> str:
+    """Send OAS tokens to another address.
+
+    Args:
+        to_address: Recipient bech32 address (oasyce1...)
+        amount_uoas: Amount in uoas (1 OAS = 1,000,000 uoas)
+
+    Requires OASYCE_MNEMONIC env var.
+    """
+    try:
+        return _tx_result(_get_signer().send(to_address, amount_uoas))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def self_register(nonce: int) -> str:
+    """Register on the Oasyce network using Proof-of-Work.
+
+    Args:
+        nonce: The PoW nonce that satisfies sha256(address || nonce) with N leading zero bits.
+
+    Solve the puzzle first, then submit. Reward: 20 OAS airdrop (as repayable debt).
+    Use the chain's built-in solver: oasyced util solve-pow [address]
+    """
+    try:
+        return _tx_result(_get_signer().self_register(nonce))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def register_capability(
+    name: str,
+    endpoint: str,
+    price_uoas: int,
+    tags: str = "",
+    description: str = "",
+    rate_limit: int = 100,
+) -> str:
+    """Register an AI service capability on the Oasyce marketplace.
+
+    Args:
+        name: Service name (e.g. "GPT-4 Summarizer")
+        endpoint: HTTP endpoint URL that handles invocations
+        price_uoas: Price per call in uoas (e.g. 500000 = 0.5 OAS)
+        tags: Comma-separated tags (e.g. "nlp,summarization")
+        description: What the service does
+        rate_limit: Max calls per minute (default 100)
+
+    Requires OASYCE_MNEMONIC. Provider must have min_provider_stake staked.
+    """
+    try:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+        return _tx_result(_get_signer().register_capability(
+            name=name, endpoint=endpoint, price_uoas=price_uoas,
+            tags=tag_list, description=description, rate_limit=rate_limit,
+        ))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def invoke_capability(capability_id: str, input_data: str = "") -> str:
+    """Invoke an AI service capability. Payment is auto-escrowed.
+
+    Args:
+        capability_id: The capability ID (e.g. "CAP_0000000000000001")
+        input_data: Optional input string to send to the service
+
+    Creates escrow, locks payment. Provider completes → you get the result.
+    """
+    try:
+        data = input_data.encode() if input_data else None
+        return _tx_result(_get_signer().invoke_capability(capability_id, data))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def complete_invocation(invocation_id: str, output_hash: str, usage_report: str = "") -> str:
+    """Complete an invocation as the provider. Starts challenge window.
+
+    Args:
+        invocation_id: The invocation ID
+        output_hash: SHA256 hash of the output (min 32 chars)
+        usage_report: Optional JSON usage report (e.g. '{"tokens": 150}')
+
+    After completion, consumer has 100 blocks to dispute. Then provider claims payment.
+    """
+    try:
+        return _tx_result(_get_signer().complete_invocation(
+            invocation_id, output_hash, usage_report,
+        ))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def claim_invocation(invocation_id: str) -> str:
+    """Claim payment after the challenge window expires (provider only).
+
+    Args:
+        invocation_id: The invocation ID to claim
+
+    Must wait 100 blocks after completion. Releases escrow: 90% provider, 5% protocol, 2% burn, 3% treasury.
+    """
+    try:
+        return _tx_result(_get_signer().claim_invocation(invocation_id))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def dispute_invocation(invocation_id: str, reason: str) -> str:
+    """Dispute an invocation within the challenge window (consumer only).
+
+    Args:
+        invocation_id: The invocation ID to dispute
+        reason: Why you're disputing (evidence description)
+
+    Must be within 100 blocks of completion. Refunds escrow to consumer.
+    """
+    try:
+        return _tx_result(_get_signer().dispute_invocation(invocation_id, reason))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def register_data_asset(
+    name: str,
+    content_hash: str,
+    tags: str = "",
+    description: str = "",
+    service_url: str = "",
+) -> str:
+    """Register a data asset on the Oasyce data marketplace.
+
+    Args:
+        name: Asset name
+        content_hash: SHA256 hash of the data content
+        tags: Comma-separated tags
+        description: What the data contains
+        service_url: URL where buyers can access the data
+
+    Creates a Bancor bonding curve. Others can buy shares to get access tiers (L0-L3).
+    """
+    try:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+        return _tx_result(_get_signer().register_asset(
+            name=name, content_hash=content_hash, tags=tag_list,
+            description=description, service_url=service_url,
+        ))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def buy_data_shares(asset_id: str, amount_uoas: int) -> str:
+    """Buy shares of a data asset on the bonding curve.
+
+    Args:
+        asset_id: Data asset ID (e.g. "DATA_0000000000000001")
+        amount_uoas: Amount to spend in uoas
+
+    Price follows Bancor curve: tokens = supply * (sqrt(1 + payment/reserve) - 1).
+    More shares = higher access tier (L0-L3).
+    """
+    try:
+        return _tx_result(_get_signer().buy_shares(asset_id, amount_uoas))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def sell_data_shares(asset_id: str, shares: int) -> str:
+    """Sell shares of a data asset back to the bonding curve.
+
+    Args:
+        asset_id: Data asset ID
+        shares: Number of shares to sell
+
+    Payout follows inverse Bancor: payout = reserve * (1 - (1 - tokens/supply)^2).
+    5% protocol fee on sell.
+    """
+    try:
+        return _tx_result(_get_signer().sell_shares(asset_id, shares))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def submit_feedback(invocation_id: str, rating: int, comment: str = "") -> str:
+    """Submit feedback for a completed invocation.
+
+    Args:
+        invocation_id: The invocation to rate
+        rating: Score 1-5 (maps to 0-500 on-chain)
+        comment: Optional text feedback
+
+    Affects the provider's reputation score. 30-day half-life decay.
+    """
+    try:
+        return _tx_result(_get_signer().submit_feedback(invocation_id, rating, comment))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def register_executor(task_types: str, max_compute_units: int = 1000) -> str:
+    """Register as a compute task executor (Proof of Useful Work).
+
+    Args:
+        task_types: Comma-separated task types you can handle (e.g. "inference,embedding")
+        max_compute_units: Max compute units per task (default 1000)
+
+    Once registered, you get assigned tasks automatically via deterministic selection.
+    """
+    try:
+        types = [t.strip() for t in task_types.split(",") if t.strip()]
+        return _tx_result(_get_signer().register_executor(types, max_compute_units))
     except Exception as e:
         return json.dumps({"error": str(e)})
 

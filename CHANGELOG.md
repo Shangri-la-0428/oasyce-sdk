@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0] - 2026-03-28
+
+### Added
+
+- **Native Cosmos signing** (`oasyce_sdk.crypto`) — pure-Python TX signing, zero Go binary dependency
+  - `Wallet` class: BIP39 mnemonic, BIP32 HD derivation (m/44'/118'/0'/0/0), secp256k1 signing
+  - `NativeSigner`: encode → sign → broadcast with 15 convenience methods covering all modules
+  - Hand-rolled protobuf encoder: 33 message schemas, data-driven (no `protoc` code generation)
+  - Backend: `coincurve` (fast C extension) with `ecdsa` pure-Python fallback
+  - `bech32.py`: BIP173 encode/decode for Cosmos addresses
+- **MCP write tools** — 14 new tools for on-chain transactions via MCP protocol
+  - `create_wallet`, `get_my_address`, `send_tokens`, `self_register`
+  - `register_capability`, `invoke_capability`, `complete_invocation`, `claim_invocation`, `dispute_invocation`
+  - `register_data_asset`, `buy_data_shares`, `sell_data_shares`
+  - `submit_feedback`, `register_executor`
+  - Wallet from `OASYCE_MNEMONIC` env var, lazy-initialized
+
+### Changed
+
+- **MCP tools**: 11 read + 14 write = 25 total (was 11 read-only)
+- **Dependencies**: added `coincurve`, `ecdsa`, `mnemonic` to core dependencies
+
 ## [0.4.0] - 2026-03-26
 
 ### Added

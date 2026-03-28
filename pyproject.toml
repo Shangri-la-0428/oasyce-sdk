@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oasyce-sdk"
-version = "0.4.1"
+version = "0.5.0"
 description = "Python SDK for Oasyce -- On-chain economic system for AI agents: escrow, service marketplace, data rights, reputation, dispute resolution"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,7 +28,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Office/Business :: Financial",
 ]
-dependencies = ["requests>=2.28"]
+dependencies = [
+    "requests>=2.28",
+    "coincurve>=18.0; platform_machine != 'wasm32'",
+    "ecdsa>=0.18",
+    "mnemonic>=0.20",
+]
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0"]
