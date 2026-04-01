@@ -82,7 +82,12 @@ class NativeSigner:
     def _ensure_account(self):
         """Ensure we have account info cached."""
         if self._account_number is None:
-            self._refresh_account()
+            try:
+                self._refresh_account()
+            except Exception:
+                # New account not yet on chain — use defaults (valid for first tx)
+                self._account_number = 0
+                self._sequence = 0
 
     def sign_and_broadcast(
         self,
