@@ -100,24 +100,28 @@ Python SDK for the Oasyce L1 chain — agent-native settlement infrastructure wh
 - oas_to_uoas(oas) -> int
 - uoas_to_oas(uoas) -> float
 
-## SigningBridge (v0.3.0)
+## NativeSigner (v0.4.0)
 
-CLI signing bridge — build + sign + broadcast in one call:
+Pure-Python signer — build + sign + broadcast in one call, zero Go dependency:
 
-    from oasyce_sdk import OasyceClient, SigningBridge
-    bridge = SigningBridge(client, "./oasyced", "my-key", "oasyce-testnet-1", "tcp://localhost:26657")
-    result = bridge.create_escrow(amount_uoas=50000, asset_id="DATA_001")
+    from oasyce_sdk import OasyceClient
+    from oasyce_sdk.crypto import Wallet, NativeSigner
+    wallet = Wallet.create()
+    signer = NativeSigner(wallet, client, chain_id="oasyce-testnet-1")
+    result = signer.create_escrow(amount_uoas=50000, asset_id="DATA_001")
 
 Methods: create_escrow, release_escrow, refund_escrow, register_capability,
 invoke_capability, complete_invocation, claim_invocation, submit_feedback,
 register_asset, buy_shares, self_register, broadcast(tx_body)
 
+Note: SigningBridge (v0.3.0) is deprecated. Use NativeSigner instead.
+
 ## AhrpChainAdapter (v0.3.0)
 
-Adapts SigningBridge to Plugin Engine AHRP Executor interface (zero AHRP code changes):
+Adapts NativeSigner to the AHRP Executor interface (zero AHRP code changes):
 
     from oasyce_sdk import AhrpChainAdapter
-    adapter = AhrpChainAdapter(bridge)
+    adapter = AhrpChainAdapter(signer)
     # executor = AHRPExecutor(chain_client=adapter)
 
 Satisfies: adapter.chain.create_escrow(), adapter.chain.release_escrow(), adapter.is_chain_mode
@@ -151,5 +155,5 @@ OasyceError
 
 - Chain: https://github.com/Shangri-la-0428/oasyce-chain
 - SDK: https://github.com/Shangri-la-0428/oasyce-sdk
-- Plugin Engine: https://github.com/Shangri-la-0428/oasyce-net
+- oasyce-net (CLI + Dashboard): https://github.com/Shangri-la-0428/oasyce-net
 - Discord: https://discord.gg/tfrCn54yZW

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.8.2] - 2026-04-01
+
+### Added
+
+- **First-run onboarding** — `oasyce-agent start` asks 2 questions on first run:
+  1. Scan directories (defaults + optional extra)
+  2. Trading style (conservative / balanced / aggressive)
+  Then saves config and starts daemon. Human touches it once, AI handles everything after.
+
+## [0.8.1] - 2026-04-01
+
+### Fixed
+
+- **New account self-registration** — `NativeSigner` now handles accounts not yet on chain
+  (falls back to account_number=0, sequence=0). This was the last blocker for fully automatic
+  onboarding: create wallet → solve PoW → self-register → airdrop → scan → trade.
+
+## [0.8.0] - 2026-04-01
+
+### Added
+
+- **Economic closed loop** — agent can now discover and trade capabilities
+  - `discover_and_trade()`: discover capabilities by tags, invoke new ones, record trades
+  - `capability_trades` table in agent.db for trade history
+  - Config: `auto_trade`, `trade_tags`, `trade_max_spend_uoas`
+- **Multi-device support** — `oasyce-agent join "mnemonic"` imports existing owner wallet
+  - Same mnemonic = same address = same economic identity across devices
+
+### Fixed
+
+- **Unified wallet** — removed `.agent` hack, added Ed25519→identity.json auto-migration
+  - `wallet.json` = secp256k1 chain wallet (always)
+  - `identity.json` = Ed25519 P2P identity (if needed)
+
 ## [0.7.0] - 2026-04-01
 
 ### Added

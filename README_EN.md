@@ -472,41 +472,6 @@ OasyceClient.uoas_to_oas(2500000)  # 2.5
 
 ---
 
-## AHRP Adapter (v0.3.0)
-
-`SigningBridge` combines SDK TX builders with `oasyced` CLI signing for one-step broadcast:
-
-```python
-from oasyce_sdk import OasyceClient, SigningBridge
-
-client = OasyceClient("http://localhost:1317")
-bridge = SigningBridge(
-    client=client,
-    oasyced_path="./oasyced",
-    key_name="my-agent",
-    chain_id="oasyce-testnet-1",
-    node="tcp://localhost:26657",
-)
-
-# Build + sign + broadcast
-result = bridge.create_escrow(amount_uoas=50000, asset_id="DATA_001")
-print(result.tx_hash, result.success)
-```
-
-`AhrpChainAdapter` adapts `SigningBridge` to the Plugin Engine AHRP Executor interface, **zero changes to AHRP code required**:
-
-```python
-from oasyce_sdk import AhrpChainAdapter
-
-adapter = AhrpChainAdapter(bridge)
-# Pass directly to AHRP Executor:
-# executor = AHRPExecutor(chain_client=adapter)
-```
-
-See `examples/ahrp_two_agent_demo.py` for a complete two-agent demo.
-
----
-
 ## Error Handling
 
 All errors inherit from `OasyceError`, so you can catch broadly or specifically:
@@ -548,10 +513,9 @@ You could hit `http://localhost:1317/oasyce/capability/v1/capabilities` directly
 - **Unit conversion** -- `oas_to_uoas()` / `uoas_to_oas()` built in
 - **Protobuf enum mapping** -- `ESCROW_STATUS_LOCKED` becomes `"LOCKED"`
 - **Transaction builders** -- correct message structure without reading proto files
-- **Signing bridge** -- build + sign + broadcast in one call via CLI
-- **AHRP adapter** -- connect to Plugin Engine's agent routing protocol with zero code changes
+- **Native signing** -- pure-Python secp256k1 signing, zero Go dependency
 - **Thread-safe** -- no global state, uses `requests.Session` internally
-- **One dependency** -- only `requests>=2.28`, no protobuf compilation needed
+- **Lightweight** -- `requests` + `coincurve` + `mnemonic`, no protobuf compilation needed
 
 ## License
 

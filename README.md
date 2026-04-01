@@ -514,21 +514,6 @@ OasyceClient.uoas_to_oas(2500000)  # 2.5
 
 ---
 
-## AHRP 适配器
-
-> **注意**：`SigningBridge`（依赖 Go 二进制 `oasyced`）已被 `NativeSigner` 取代。新项目请使用 `NativeSigner`。
-
-`AhrpChainAdapter` 将签名层适��为 Plugin Engine AHRP Executor 期望的接口：
-
-```python
-from oasyce_sdk import AhrpChainAdapter
-# adapter = AhrpChainAdapter(bridge)
-```
-
-完整示例见 `examples/ahrp_two_agent_demo.py`。
-
----
-
 ## 错误处理
 
 所有错误继承自 `OasyceError`，可以宽泛或精确地捕获：
@@ -575,8 +560,7 @@ OasyceError
 
 ## 生态链接
 
-- [oasyce-chain](https://github.com/Shangri-la-0428/oasyce-chain) — L1 链（Go / Cosmos SDK），公测文档见 `docs/PUBLIC_BETA_CN.md`
-- [Plugin Engine](https://github.com/Shangri-la-0428/oasyce-net) — Python CLI + Dashboard + DataVault（`pip install oasyce`）
+- [oasyce-chain](https://github.com/Shangri-la-0428/oasyce-chain) — L1 链（Go / Cosmos SDK）
 - [Discord](https://discord.gg/tfrCn54yZW)
 
 ## 协议

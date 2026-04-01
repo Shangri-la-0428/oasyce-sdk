@@ -3,7 +3,7 @@
 Iron Rule: only files with risk == "safe" may auto-register on chain.
 Everything else requires explicit human confirmation.
 
-Ported from DataVault (odv), integrated into oasyce-sdk agent pipeline.
+PII detection for the oasyce-sdk agent pipeline.
 """
 
 from __future__ import annotations
