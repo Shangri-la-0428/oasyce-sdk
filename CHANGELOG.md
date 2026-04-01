@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.7.0] - 2026-04-01
+
+### Added
+
+- **Unified data pipeline** — absorbs DataVault (odv) into oasyce-sdk
+  - `privacy.py`: PII regex detection (email, phone, ID card, credit card, API key) with risk scoring
+  - Iron Rule enforced: only `safe` files auto-register (no PII detected)
+  - Privacy gate integrated into scan→register pipeline
+  - `oasyce-agent scan <path>` — one-shot directory scan with classification + privacy report
+  - `oasyce-agent privacy <path>` — check file/directory for PII
+  - `oasyce-agent stats` — show registered asset breakdown
+  - 19 new privacy/integration tests (177 total)
+
+- **Data Agent** (`oasyce-agent`) — autonomous data asset registration daemon
+  - `oasyce-agent start` — one command, zero config, works on macOS/Linux/Windows
+  - Auto wallet creation with BIP39 mnemonic
+  - Auto PoW self-registration for gas airdrop
+  - File scanner: walks ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures
+  - 60+ file types classified into 7 categories (document, dataset, code, image, audio, video, design)
+  - SHA256 content hashing, deduplicated via local SQLite state
+  - Cross-platform daemon: `start/stop/status/run` with PID management
+  - Rate-limited: 10 assets per cycle, 1-hour intervals (configurable)
+
+### Changed
+
+- CLI entry points: `oasyce-agent` added alongside `oasyce-mcp`
+- `pip install oasyce` now auto-includes `oasyce-sdk` (oasyce-net dependency wired)
+- DataVault (odv) functionality fully absorbed — no separate install needed
+
 ## [0.5.1] - 2026-04-01
 
 ### Added

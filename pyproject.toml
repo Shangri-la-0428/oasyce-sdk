@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oasyce-sdk"
-version = "0.5.1"
+version = "0.7.0"
 description = "Python SDK for Oasyce -- On-chain economic system for AI agents: escrow, service marketplace, data rights, reputation, dispute resolution"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -42,6 +42,7 @@ all = ["mcp>=1.0", "langchain-core>=0.2"]
 
 [project.scripts]
 oasyce-mcp = "oasyce_sdk.mcp_server:main"
+oasyce-agent = "oasyce_sdk.agent.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Shangri-la-0428/oasyce-chain"

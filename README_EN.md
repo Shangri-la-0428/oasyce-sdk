@@ -13,6 +13,35 @@ pip install oasyce-sdk[langchain] # + LangChain Tools
 pip install oasyce-sdk[all]       # Everything
 ```
 
+## Data Agent (v0.7.0)
+
+**One command, automatic data asset registration.** Background daemon scans local files → privacy check → SHA256 hash → on-chain registration. Works on macOS / Linux / Windows.
+
+```bash
+pip install oasyce-sdk
+oasyce-agent start     # that's it.
+```
+
+What it does automatically:
+1. Creates a wallet (BIP39 mnemonic saved to `~/.oasyce/wallet.json`)
+2. Solves PoW puzzle, self-registers on chain for OAS airdrop
+3. Scans ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures
+4. **Privacy gate**: PII detection (email, phone, ID card, credit card, API key) — only `safe` files register
+5. New files → SHA256 → registered as on-chain data assets
+6. Repeats hourly in the background
+
+```bash
+oasyce-agent status                # check status + registered asset count
+oasyce-agent stop                  # stop daemon
+oasyce-agent scan ~/Documents      # one-shot scan (classify + privacy report)
+oasyce-agent privacy ~/secret.csv  # check single file for PII
+oasyce-agent stats                 # asset breakdown
+```
+
+Config: `~/.oasyce/agent.json` (auto-generated, editable for scan paths, interval, etc).
+
+> DataVault (odv) is now fully absorbed into oasyce-sdk. No separate install needed.
+
 ## MCP Server
 
 Let your AI assistant (Claude Desktop / Cursor / Windsurf) interact with the Oasyce chain directly.

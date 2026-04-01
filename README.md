@@ -15,6 +15,35 @@ pip install oasyce-sdk[langchain] # + LangChain Tools
 pip install oasyce-sdk[all]       # 全部
 ```
 
+## Data Agent（v0.7.0）
+
+**一条命令，自动确权你的数据资产。** 后台守护进程，扫描本地文件 → 隐私检测 → SHA256 哈希 → 链上注册。macOS / Linux / Windows 通用。
+
+```bash
+pip install oasyce-sdk
+oasyce-agent start     # 完了。
+```
+
+自动完成：
+1. 创建钱包（BIP39 助记词保存到 `~/.oasyce/wallet.json`）
+2. 解 PoW 谜题，链上自注册领取 OAS 空投
+3. 扫描 ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures
+4. **隐私门控**：PII 检测（邮箱/手机/身份证/银行卡/API密钥），仅 `safe` 文件自动注册
+5. 新文件 SHA256 → 链上注册数据资产
+6. 每小时重复，后台运行
+
+```bash
+oasyce-agent status                # 查看运行状态 + 已注册资产数
+oasyce-agent stop                  # 停止
+oasyce-agent scan ~/Documents      # 手动扫描（分类 + 隐私报告）
+oasyce-agent privacy ~/secret.csv  # 单文件 PII 检查
+oasyce-agent stats                 # 资产统计
+```
+
+配置文件：`~/.oasyce/agent.json`（自动生成，可手动编辑扫描路径、间隔等）。
+
+> DataVault (odv) 功能已完全整合进 oasyce-sdk。无需单独安装。
+
 ## 原生签名（v0.5.0 新增）
 
 **零 Go 依赖。** 纯 Python 创建钱包、签名交易、广播上链：
