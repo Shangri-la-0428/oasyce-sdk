@@ -114,18 +114,6 @@ Methods: create_escrow, release_escrow, refund_escrow, register_capability,
 invoke_capability, complete_invocation, claim_invocation, submit_feedback,
 register_asset, buy_shares, self_register, broadcast(tx_body)
 
-Note: SigningBridge (v0.3.0) is deprecated. Use NativeSigner instead.
-
-## AhrpChainAdapter (v0.3.0)
-
-Adapts NativeSigner to the AHRP Executor interface (zero AHRP code changes):
-
-    from oasyce_sdk import AhrpChainAdapter
-    adapter = AhrpChainAdapter(signer)
-    # executor = AHRPExecutor(chain_client=adapter)
-
-Satisfies: adapter.chain.create_escrow(), adapter.chain.release_escrow(), adapter.is_chain_mode
-
 ## Types (21 frozen dataclasses)
 
 Capability, Earnings, DataAsset, ShareHolder, BondingCurve, Escrow,

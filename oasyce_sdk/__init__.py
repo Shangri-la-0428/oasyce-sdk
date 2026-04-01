@@ -8,9 +8,7 @@ Usage::
     caps = client.list_capabilities(tag="llm")
 """
 
-from .ahrp_adapter import AhrpChainAdapter
 from .client import OasyceClient
-from .signing_bridge import SigningBridge
 from .errors import (
     ChainError,
     ConnectionError,
@@ -45,12 +43,10 @@ from .types import (
     TxResult,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.8.3"
 
 __all__ = [
     "OasyceClient",
-    "SigningBridge",
-    "AhrpChainAdapter",
     "__version__",
     # Errors
     "OasyceError",
