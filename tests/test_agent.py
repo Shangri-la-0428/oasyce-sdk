@@ -314,3 +314,79 @@ class TestCore:
             assert _get_state(conn, "foo") == "bar"
 
             conn.close()
+
+    def test_init_db_has_trades_table(self):
+        from oasyce_sdk.agent.core import _init_db
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_db = os.path.join(tmpdir, "test.db")
+            import oasyce_sdk.agent.core as core_mod
+            old_path = core_mod.DB_PATH
+            core_mod.DB_PATH = original_db
+            try:
+                conn = _init_db()
+                # capability_trades table should exist
+                cur = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='capability_trades'"
+                )
+                assert cur.fetchone() is not None
+                conn.close()
+            finally:
+                core_mod.DB_PATH = old_path
+
+    def test_discover_no_trade_when_disabled(self):
+        from oasyce_sdk.agent.core import discover_and_trade, _init_db
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            import oasyce_sdk.agent.core as core_mod
+            old_path = core_mod.DB_PATH
+            core_mod.DB_PATH = db_path
+            try:
+                conn = _init_db()
+                config = {"auto_trade": False}
+                result = discover_and_trade(None, None, conn, config)
+                assert result == 0
+                conn.close()
+            finally:
+                core_mod.DB_PATH = old_path
+
+    def test_discover_no_trade_when_no_tags(self):
+        from oasyce_sdk.agent.core import discover_and_trade, _init_db
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            import oasyce_sdk.agent.core as core_mod
+            old_path = core_mod.DB_PATH
+            core_mod.DB_PATH = db_path
+            try:
+                conn = _init_db()
+                config = {"auto_trade": True, "trade_tags": []}
+                result = discover_and_trade(None, None, conn, config)
+                assert result == 0
+                conn.close()
+            finally:
+                core_mod.DB_PATH = old_path
+
+    def test_get_traded_ids(self):
+        from oasyce_sdk.agent.core import _get_traded_ids, _init_db
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            import oasyce_sdk.agent.core as core_mod
+            old_path = core_mod.DB_PATH
+            core_mod.DB_PATH = db_path
+            try:
+                conn = _init_db()
+                assert len(_get_traded_ids(conn)) == 0
+                conn.execute(
+                    "INSERT INTO capability_trades VALUES (?, ?, ?, ?, ?)",
+                    ("cap-001", "tx123", 500000, "nlp", "2026-01-01T00:00:00Z"),
+                )
+                conn.commit()
+                assert "cap-001" in _get_traded_ids(conn)
+                conn.close()
+            finally:
+                core_mod.DB_PATH = old_path

@@ -1,4 +1,4 @@
-"""Agent core — the brain. Auto-wallet, auto-PoW, scan→register→sleep loop."""
+"""Agent core — the brain. Auto-wallet, auto-PoW, scan→register→discover→trade→sleep."""
 
 from __future__ import annotations
 
@@ -40,6 +40,9 @@ def _load_config() -> dict:
         "max_per_cycle": MAX_PER_CYCLE,
         "scan_paths": scanner.DEFAULT_SCAN_PATHS,
         "max_file_size_mb": 50,
+        "auto_trade": False,
+        "trade_tags": [],
+        "trade_max_spend_uoas": 1_000_000,  # 1 OAS per cycle
     }
     os.makedirs(OASYCE_DIR, exist_ok=True)
     with open(CONFIG_PATH, "w") as f:
@@ -67,6 +70,16 @@ def _init_db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS agent_state (
             key TEXT PRIMARY KEY,
             value TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS capability_trades (
+            capability_id TEXT,
+            invocation_tx TEXT,
+            amount_uoas INTEGER,
+            tags TEXT,
+            traded_at TEXT,
+            PRIMARY KEY (capability_id, traded_at)
         )
     """)
     conn.commit()
@@ -208,6 +221,75 @@ def _ensure_registered(wallet, client, signer, conn):
 
 
 # ---------------------------------------------------------------------------
+# Discover + Trade
+# ---------------------------------------------------------------------------
+
+def _get_traded_ids(conn: sqlite3.Connection) -> Set[str]:
+    """Load all previously traded capability IDs."""
+    cur = conn.execute("SELECT DISTINCT capability_id FROM capability_trades")
+    return {row[0] for row in cur.fetchall()}
+
+
+def discover_and_trade(client, signer, conn, config) -> int:
+    """Discover capabilities by tags, invoke new ones. Returns trade count."""
+    if not config.get("auto_trade"):
+        return 0
+
+    tags = config.get("trade_tags", [])
+    if not tags:
+        return 0
+
+    max_spend = config.get("trade_max_spend_uoas", 1_000_000)
+    traded_ids = _get_traded_ids(conn)
+    spent = 0
+    trades = 0
+
+    for tag in tags:
+        try:
+            caps = client.list_capabilities(tag=tag)
+        except Exception as e:
+            logger.warning("Discovery failed for tag '%s': %s", tag, e)
+            continue
+
+        for cap in caps:
+            if cap.id in traded_ids:
+                continue
+            price = getattr(cap, "price_per_call", 0) or 0
+            if spent + price > max_spend:
+                logger.info("Trade budget reached (%d/%d uoas)", spent, max_spend)
+                return trades
+
+            try:
+                result = signer.invoke_capability(cap.id)
+                if result.success:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO capability_trades VALUES (?, ?, ?, ?, ?)",
+                        (cap.id, result.tx_hash, price, tag,
+                         datetime.now(timezone.utc).isoformat()),
+                    )
+                    conn.commit()
+                    traded_ids.add(cap.id)
+                    spent += price
+                    trades += 1
+                    logger.info("Invoked: %s (%s) TX: %s", cap.name, cap.id, result.tx_hash)
+                else:
+                    logger.warning("Trade failed for %s: %s", cap.id, result.raw_log)
+                    if result.code in (5, 11):
+                        logger.warning("Insufficient funds, stopping trades")
+                        return trades
+            except Exception as e:
+                logger.error("Error trading %s: %s", cap.id, e)
+
+            time.sleep(1)
+
+    if trades:
+        logger.info("Traded %d capabilities, spent %d uoas", trades, spent)
+    else:
+        logger.info("No new capabilities to trade")
+    return trades
+
+
+# ---------------------------------------------------------------------------
 # Main Loop
 # ---------------------------------------------------------------------------
 
@@ -314,6 +396,7 @@ def run_forever():
         logger.info("--- Cycle %d ---", cycle)
         try:
             run_once(wallet, client, signer, conn, config)
+            discover_and_trade(client, signer, conn, config)
         except KeyboardInterrupt:
             raise
         except Exception as e:
