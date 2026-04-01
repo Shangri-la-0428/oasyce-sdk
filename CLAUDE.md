@@ -116,8 +116,7 @@ oasyce_sdk/
 
 - Never register files with PII (privacy_risk != "safe")
 - Only SHA-256 hash + metadata go on-chain, never file content
-- Two wallet systems coexist: oasyce-net uses Ed25519 (identity), oasyce-sdk uses secp256k1 (chain signing)
-- Agent creates `wallet.json.agent` if `wallet.json` has incompatible format
+- Two wallet systems coexist: oasyce-net uses Ed25519 (`identity.json`), oasyce-sdk uses secp256k1 (`wallet.json`). Auto-migration from legacy formats included.
 
 ## Links
 
