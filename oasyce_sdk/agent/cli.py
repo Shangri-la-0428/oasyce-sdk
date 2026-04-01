@@ -195,6 +195,40 @@ def cmd_privacy(args):
         sys.exit(1)
 
 
+def cmd_join(args):
+    """Join an existing owner account by importing a mnemonic."""
+    from oasyce_sdk.crypto.wallet import Wallet
+
+    wallet_path = os.path.join(daemon.OASYCE_DIR, "wallet.json")
+    if os.path.exists(wallet_path):
+        with open(wallet_path) as f:
+            data = json.load(f)
+        existing = data.get("address", "unknown")
+        if not args.force:
+            print(f"Wallet already exists: {existing}")
+            print("Use --force to overwrite.")
+            sys.exit(1)
+
+    mnemonic = args.mnemonic
+    try:
+        w = Wallet.from_mnemonic(mnemonic)
+    except Exception as e:
+        print(f"Invalid mnemonic: {e}")
+        sys.exit(1)
+
+    os.makedirs(daemon.OASYCE_DIR, exist_ok=True)
+    with open(wallet_path, "w") as f:
+        json.dump({"mnemonic": mnemonic, "address": w.address}, f, indent=2)
+
+    if sys.platform != "win32":
+        import stat
+        os.chmod(wallet_path, stat.S_IRUSR | stat.S_IWUSR)
+
+    print(f"Joined: {w.address}")
+    print(f"This device now operates under the same owner account.")
+    print(f"\n  oasyce-agent start   # begin scanning on this device")
+
+
 def cmd_stats(args):
     """Show registered asset statistics."""
     _print_db_summary(verbose=True)
@@ -275,6 +309,11 @@ def main():
     sub.add_parser("status", help="Show agent status")
     sub.add_parser("run", help="Run in foreground (for debugging)")
 
+    # Identity
+    p_join = sub.add_parser("join", help="Join existing owner account (import mnemonic)")
+    p_join.add_argument("mnemonic", help="24-word BIP39 mnemonic")
+    p_join.add_argument("--force", action="store_true", help="Overwrite existing wallet")
+
     # Manual
     p_scan = sub.add_parser("scan", help="Scan directory (classify + privacy)")
     p_scan.add_argument("path", help="Directory to scan")
@@ -292,6 +331,7 @@ def main():
         "stop": cmd_stop,
         "status": cmd_status,
         "run": cmd_run,
+        "join": cmd_join,
         "scan": cmd_scan,
         "privacy": cmd_privacy,
         "stats": cmd_stats,
@@ -303,8 +343,9 @@ def main():
         _print_banner()
         parser.print_help()
         print("\nQuick start:")
-        print("  oasyce-agent start          # background daemon (scan + register)")
-        print("  oasyce-agent scan ~/Documents  # one-shot scan + privacy report")
+        print("  oasyce-agent start              # new device, new account")
+        print("  oasyce-agent join \"word1 ...\"    # join existing account")
+        print("  oasyce-agent scan ~/Documents    # one-shot scan")
         sys.exit(1)
 
 
