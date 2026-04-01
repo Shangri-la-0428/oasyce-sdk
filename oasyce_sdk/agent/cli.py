@@ -247,15 +247,14 @@ def _print_db_summary(verbose: bool = False):
 
 
 def _print_wallet():
-    for wname in ("wallet.json.agent", "wallet.json"):
-        wp = os.path.join(daemon.OASYCE_DIR, wname)
-        if os.path.exists(wp):
-            with open(wp) as f:
-                data = json.load(f)
-            addr = data.get("address")
-            if addr:
-                print(f"Wallet: {addr}")
-                return
+    wp = os.path.join(daemon.OASYCE_DIR, "wallet.json")
+    if os.path.exists(wp):
+        with open(wp) as f:
+            data = json.load(f)
+        addr = data.get("address")
+        if addr:
+            print(f"Wallet: {addr}")
+            return
     print("Wallet: not created yet")
 
 

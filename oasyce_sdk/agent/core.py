@@ -115,9 +115,17 @@ def _set_state(conn: sqlite3.Connection, key: str, value: str):
 # ---------------------------------------------------------------------------
 
 def _ensure_wallet():
-    """Create wallet if none exists. Returns (Wallet, is_new)."""
+    """Create wallet if none exists. Returns (Wallet, is_new).
+
+    wallet.json is exclusively the secp256k1 chain wallet.
+    If an Ed25519 identity file exists at this path (legacy), it is
+    migrated to identity.json to avoid collisions.
+    """
     from oasyce_sdk.crypto.wallet import Wallet
 
+    identity_path = os.path.join(OASYCE_DIR, "identity.json")
+
+    # Migrate legacy Ed25519 identity that was incorrectly stored as wallet.json
     if os.path.exists(WALLET_PATH):
         with open(WALLET_PATH) as f:
             data = json.load(f)
@@ -129,34 +137,40 @@ def _ensure_wallet():
             w = Wallet.from_private_key(data["private_key"])
             logger.info("Loaded wallet: %s", w.address)
             return w, False
-        else:
-            # Unknown format (e.g. encrypted) — generate fresh agent wallet
-            logger.warning("Existing wallet format unsupported, creating agent wallet")
-            WALLET_PATH_AGENT = WALLET_PATH + ".agent"
-            if os.path.exists(WALLET_PATH_AGENT):
-                with open(WALLET_PATH_AGENT) as f2:
-                    data2 = json.load(f2)
-                w = Wallet.from_mnemonic(data2["mnemonic"])
-                logger.info("Loaded agent wallet: %s", w.address)
-                return w, False
-            # Fall through to create new
+        elif "version" in data and "public_key" in data:
+            # Ed25519 identity — move to identity.json, free wallet.json
+            if not os.path.exists(identity_path):
+                os.rename(WALLET_PATH, identity_path)
+                logger.info("Migrated Ed25519 identity → %s", identity_path)
+            else:
+                os.remove(WALLET_PATH)
+                logger.info("Removed stale Ed25519 wallet.json (identity.json exists)")
+            # Fall through to create chain wallet
 
-    # Generate new wallet — use .agent suffix if main wallet exists with unknown format
+    # Also migrate any .agent hack files from v0.7.0
+    agent_path = WALLET_PATH + ".agent"
+    if os.path.exists(agent_path):
+        with open(agent_path) as f:
+            data = json.load(f)
+        if "mnemonic" in data and not os.path.exists(WALLET_PATH):
+            os.rename(agent_path, WALLET_PATH)
+            w = Wallet.from_mnemonic(data["mnemonic"])
+            logger.info("Migrated wallet.json.agent → wallet.json: %s", w.address)
+            return w, False
+
+    # Create new secp256k1 chain wallet
     w = Wallet.create()
     os.makedirs(OASYCE_DIR, exist_ok=True)
-    save_path = WALLET_PATH if not os.path.exists(WALLET_PATH) else WALLET_PATH + ".agent"
-    with open(save_path, "w") as f:
+    with open(WALLET_PATH, "w") as f:
         json.dump({
             "mnemonic": w.mnemonic,
             "address": w.address,
         }, f, indent=2)
 
-    # Restrict permissions on Unix
     if sys.platform != "win32":
-        os.chmod(save_path, stat.S_IRUSR | stat.S_IWUSR)
+        os.chmod(WALLET_PATH, stat.S_IRUSR | stat.S_IWUSR)
 
-    logger.info("Created new wallet: %s", w.address)
-    logger.info("Mnemonic saved to: %s", WALLET_PATH)
+    logger.info("Created new wallet: %s (saved to %s)", w.address, WALLET_PATH)
     return w, True
 
 
