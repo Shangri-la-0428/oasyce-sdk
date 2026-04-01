@@ -44,7 +44,7 @@ def _print_banner():
 {c5}          ⠈⠉⠛⠛⠛⠉⠁
 
 {W}       O A S Y C E{R}  {D}agent{R}
-{D}                      v0.8.3{R}
+{D}                      v0.8.4{R}
 """)
 
 
