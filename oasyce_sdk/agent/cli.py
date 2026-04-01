@@ -42,15 +42,107 @@ def _human_size(size: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# First-run setup
+# ---------------------------------------------------------------------------
+
+_TRADE_PROFILES = {
+    "a": {
+        "label": "Conservative",
+        "desc": "earn only, never spend",
+        "auto_trade": False,
+        "trade_tags": [],
+        "trade_max_spend_uoas": 0,
+    },
+    "b": {
+        "label": "Balanced",
+        "desc": "≤1 OAS/day on useful capabilities",
+        "auto_trade": True,
+        "trade_tags": ["ai", "nlp", "data", "analytics"],
+        "trade_max_spend_uoas": 1_000_000,
+    },
+    "c": {
+        "label": "Aggressive",
+        "desc": "actively discover and trade",
+        "auto_trade": True,
+        "trade_tags": ["ai", "nlp", "data", "analytics", "code", "translation"],
+        "trade_max_spend_uoas": 10_000_000,
+    },
+}
+
+
+def _first_run_setup(config_path: str):
+    """Interactive first-run: 2 questions, then the agent runs forever."""
+    from . import scanner
+
+    print("  First time? 2 questions, then I run forever.\n")
+
+    # --- Question 1: scan paths ---
+    defaults = scanner.DEFAULT_SCAN_PATHS
+    short = [os.path.basename(p) for p in defaults]
+    print(f"  1. Scan directories:")
+    print(f"     {', '.join(short)}")
+    extra = input("     Add more? (path or enter to skip): ").strip()
+
+    scan_paths = list(defaults)
+    if extra:
+        expanded = os.path.expanduser(extra)
+        if os.path.isdir(expanded):
+            scan_paths.append(expanded)
+            print(f"     + {expanded}")
+        else:
+            print(f"     '{extra}' not found, skipping")
+
+    # --- Question 2: trading style ---
+    print()
+    print("  2. Trading style:")
+    print("     a) Conservative — earn only, never spend")
+    print("     b) Balanced     — ≤1 OAS/day on useful capabilities")
+    print("     c) Aggressive   — actively discover and trade")
+    choice = input("     Choose [a/b/c] (default: b): ").strip().lower() or "b"
+    profile = _TRADE_PROFILES.get(choice, _TRADE_PROFILES["b"])
+
+    # --- Privacy notice ---
+    print()
+    print("  Privacy: only safe files register. Always on. Non-negotiable.")
+
+    # --- Save config ---
+    config = {
+        "node_url": "http://47.93.32.88:1317",
+        "chain_id": "oasyce-testnet-1",
+        "interval_seconds": 3600,
+        "max_per_cycle": 10,
+        "scan_paths": scan_paths,
+        "max_file_size_mb": 50,
+        "auto_trade": profile["auto_trade"],
+        "trade_tags": profile["trade_tags"],
+        "trade_max_spend_uoas": profile["trade_max_spend_uoas"],
+    }
+
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    print(f"\n  Ready.")
+    print(f"  Scanning: {len(scan_paths)} directories")
+    print(f"  Trading:  {profile['label']} — {profile['desc']}")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Daemon commands
 # ---------------------------------------------------------------------------
 
 def cmd_start(args):
     _print_banner()
+
+    config_path = os.path.join(daemon.OASYCE_DIR, "agent.json")
+    if not os.path.exists(config_path):
+        _first_run_setup(config_path)
+
     ok, msg = daemon.start()
     print(msg)
     if ok:
-        print(f"\n  Config:  {os.path.join(daemon.OASYCE_DIR, 'agent.json')}")
+        print(f"\n  Config:  {config_path}")
         print(f"  Wallet:  {os.path.join(daemon.OASYCE_DIR, 'wallet.json')}")
         print(f"  Logs:    {daemon.LOG_FILE}")
         print(f"\n  oasyce-agent status   # check progress")
