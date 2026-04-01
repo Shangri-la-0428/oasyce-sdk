@@ -33,7 +33,7 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-10 tools: health check, faucet, balance, agent profile, marketplace, capabilities, reputation, data assets, open tasks, issue reporting.
+28 tools (13 read + 15 write): health check, faucet, balance, agent profile, marketplace, capabilities, reputation, leaderboard, data assets, open tasks, issue reporting, **anchor check**, **anchors by capability** — plus write tools: create wallet, send tokens, self-register, register/invoke/complete/claim/dispute capability, register data asset, buy/sell shares, submit feedback, register executor, **anchor trace**.
 
 ## LangChain Tools
 

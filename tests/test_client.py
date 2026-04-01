@@ -22,6 +22,7 @@ from oasyce_sdk.errors import (
 )
 from oasyce_sdk.types import (
     Account,
+    AnchorRecord,
     Balance,
     Block,
     BondingCurve,
@@ -897,6 +898,148 @@ class TestBroadcastTx(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Client repr / construction
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Anchor tests
+# ---------------------------------------------------------------------------
+
+# A fake 32-byte trace ID (hex)
+_TRACE_ID_HEX = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
+# Matching base64 of those bytes
+_TRACE_ID_B64 = "obLD1OX2p7jJ0OHyo7TF1uf4qbDB0uP0pbbH2On wouy"  # placeholder
+
+import base64 as _b64
+_TRACE_ID_B64 = _b64.b64encode(bytes.fromhex(_TRACE_ID_HEX)).decode()
+_NODE_PUBKEY_HEX = "d4a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"
+_NODE_PUBKEY_B64 = _b64.b64encode(bytes.fromhex(_NODE_PUBKEY_HEX)).decode()
+_SIG_HEX = "00" * 64
+_SIG_B64 = _b64.b64encode(bytes.fromhex(_SIG_HEX)).decode()
+
+
+class TestAnchor(unittest.TestCase):
+
+    def setUp(self):
+        self.client = OasyceClient("http://testnode:1317", timeout=5)
+
+    @patch.object(requests.Session, "get")
+    def test_get_anchor(self, mock_get):
+        mock_get.return_value = _mock_response(200, {
+            "anchor": {
+                "trace_id": _TRACE_ID_B64,
+                "node_pubkey": _NODE_PUBKEY_B64,
+                "capability": "tool-summarize",
+                "outcome": "1",
+                "timestamp": "1711929600000",
+                "anchor_height": "42",
+                "trace_signature": _SIG_B64,
+            }
+        })
+        record = self.client.get_anchor(_TRACE_ID_HEX)
+        self.assertIsInstance(record, AnchorRecord)
+        self.assertEqual(record.trace_id, _TRACE_ID_HEX)
+        self.assertEqual(record.capability, "tool-summarize")
+        self.assertEqual(record.outcome, 1)
+        self.assertEqual(record.timestamp, 1711929600000)
+        self.assertEqual(record.anchor_height, 42)
+
+    @patch.object(requests.Session, "get")
+    def test_is_anchored_true(self, mock_get):
+        mock_get.return_value = _mock_response(200, {"anchored": True})
+        self.assertTrue(self.client.is_anchored(_TRACE_ID_HEX))
+
+    @patch.object(requests.Session, "get")
+    def test_is_anchored_false(self, mock_get):
+        mock_get.return_value = _mock_response(200, {"anchored": False})
+        self.assertFalse(self.client.is_anchored(_TRACE_ID_HEX))
+
+    @patch.object(requests.Session, "get")
+    def test_is_anchored_404(self, mock_get):
+        mock_get.return_value = _mock_response(404, None, text="not found")
+        self.assertFalse(self.client.is_anchored(_TRACE_ID_HEX))
+
+    @patch.object(requests.Session, "get")
+    def test_anchors_by_capability(self, mock_get):
+        mock_get.return_value = _mock_response(200, {
+            "anchors": [
+                {
+                    "trace_id": _TRACE_ID_B64,
+                    "node_pubkey": _NODE_PUBKEY_B64,
+                    "capability": "tool-summarize",
+                    "outcome": "1",
+                    "timestamp": "1711929600000",
+                    "anchor_height": "100",
+                    "trace_signature": _SIG_B64,
+                },
+            ],
+            "pagination": {"total": "1"},
+        })
+        records = self.client.anchors_by_capability("tool-summarize", limit=10)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].capability, "tool-summarize")
+
+    @patch.object(requests.Session, "get")
+    def test_anchors_by_node(self, mock_get):
+        mock_get.return_value = _mock_response(200, {
+            "anchors": [],
+            "pagination": {"total": "0"},
+        })
+        records = self.client.anchors_by_node(_NODE_PUBKEY_HEX)
+        self.assertEqual(len(records), 0)
+
+    def test_build_anchor_trace(self):
+        tx = self.client.build_anchor_trace(
+            sender="oasyce1abc",
+            trace_id_hex=_TRACE_ID_HEX,
+            node_pubkey_hex=_NODE_PUBKEY_HEX,
+            capability="tool-summarize",
+            outcome=1,
+            timestamp=1711929600000,
+            trace_signature_hex=_SIG_HEX,
+        )
+        msgs = tx["body"]["messages"]
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0]["@type"], "/oasyce.anchor.v1.MsgAnchorTrace")
+        self.assertEqual(msgs[0]["signer"], "oasyce1abc")
+        self.assertEqual(msgs[0]["capability"], "tool-summarize")
+
+    def test_build_anchor_batch(self):
+        traces = [
+            {
+                "trace_id_hex": _TRACE_ID_HEX,
+                "node_pubkey_hex": _NODE_PUBKEY_HEX,
+                "capability": f"tool-{i}",
+                "outcome": 1,
+                "timestamp": 1711929600000 + i,
+                "trace_signature_hex": _SIG_HEX,
+            }
+            for i in range(3)
+        ]
+        tx = self.client.build_anchor_batch("oasyce1abc", traces)
+        msgs = tx["body"]["messages"]
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0]["@type"], "/oasyce.anchor.v1.MsgAnchorBatch")
+        self.assertEqual(len(msgs[0]["anchors"]), 3)
+
+    def test_bytes_from_b64_or_hex(self):
+        # base64 input
+        hex_out = OasyceClient._bytes_from_b64_or_hex(_TRACE_ID_B64)
+        self.assertEqual(hex_out, _TRACE_ID_HEX)
+        # empty
+        self.assertEqual(OasyceClient._bytes_from_b64_or_hex(""), "")
+
+    def test_anchor_record_frozen(self):
+        r = AnchorRecord(
+            trace_id=_TRACE_ID_HEX,
+            node_pubkey=_NODE_PUBKEY_HEX,
+            capability="test",
+            outcome=1,
+            timestamp=0,
+            anchor_height=0,
+            trace_signature=_SIG_HEX,
+        )
+        with self.assertRaises(AttributeError):
+            r.outcome = 2  # frozen
+
 
 class TestClientConstruction(unittest.TestCase):
 

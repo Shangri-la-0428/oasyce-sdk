@@ -27,6 +27,7 @@ from .errors import (
 from .types import (
     AccessLevel,
     Account,
+    AnchorRecord,
     Balance,
     Block,
     BondingCurve,
@@ -1235,6 +1236,132 @@ class OasyceClient:
             raw_log=raw_log,
             success=(code == 0),
         )
+
+    # ------------------------------------------------------------------
+    # Anchor (Thronglets → Chain trace anchoring)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bytes_from_b64_or_hex(val: str) -> str:
+        """Decode a base64 or hex string to hex.
+
+        Chain REST returns bytes fields as base64; we normalize to hex
+        for consistency with Thronglets trace IDs.
+        """
+        if not val:
+            return ""
+        try:
+            raw = base64.b64decode(val)
+            return raw.hex()
+        except Exception:
+            return val  # already hex or other format
+
+    def _parse_anchor(self, raw: Dict[str, Any]) -> AnchorRecord:
+        return AnchorRecord(
+            trace_id=self._bytes_from_b64_or_hex(raw.get("trace_id", "")),
+            node_pubkey=self._bytes_from_b64_or_hex(raw.get("node_pubkey", "")),
+            capability=raw.get("capability", ""),
+            outcome=_safe_int(raw.get("outcome")),
+            timestamp=_safe_int(raw.get("timestamp")),
+            anchor_height=_safe_int(raw.get("anchor_height")),
+            trace_signature=self._bytes_from_b64_or_hex(raw.get("trace_signature", "")),
+        )
+
+    def get_anchor(self, trace_id_hex: str) -> AnchorRecord:
+        """Query an anchor record by trace ID (hex-encoded).
+
+        Uses gRPC directly since anchor module has bytes path params.
+        """
+        trace_id_b64 = base64.b64encode(bytes.fromhex(trace_id_hex)).decode()
+        data = self._get(f"/oasyce/anchor/v1/anchor/{trace_id_b64}")
+        self._check_not_found(data, "Anchor", trace_id_hex)
+        return self._parse_anchor(data.get("anchor", data))
+
+    def is_anchored(self, trace_id_hex: str) -> bool:
+        """Check if a trace has been anchored on-chain."""
+        trace_id_b64 = base64.b64encode(bytes.fromhex(trace_id_hex)).decode()
+        data = self._get(f"/oasyce/anchor/v1/is_anchored/{trace_id_b64}")
+        if data.get("_status") in (404, 501):
+            return False
+        return data.get("anchored", False)
+
+    def anchors_by_capability(
+        self, capability: str, limit: int = 100,
+    ) -> List[AnchorRecord]:
+        """List anchor records filtered by capability."""
+        params: Dict[str, Any] = {}
+        if limit != 100:
+            params["pagination.limit"] = str(limit)
+        data = self._get(
+            f"/oasyce/anchor/v1/by_capability/{capability}", params=params,
+        )
+        items = data.get("anchors", [])
+        return [self._parse_anchor(a) for a in items]
+
+    def anchors_by_node(
+        self, node_pubkey_hex: str, limit: int = 100,
+    ) -> List[AnchorRecord]:
+        """List anchor records filtered by node public key (hex-encoded)."""
+        node_b64 = base64.b64encode(bytes.fromhex(node_pubkey_hex)).decode()
+        params: Dict[str, Any] = {}
+        if limit != 100:
+            params["pagination.limit"] = str(limit)
+        data = self._get(f"/oasyce/anchor/v1/by_node/{node_b64}", params=params)
+        items = data.get("anchors", [])
+        return [self._parse_anchor(a) for a in items]
+
+    def build_anchor_trace(
+        self,
+        sender: str,
+        trace_id_hex: str,
+        node_pubkey_hex: str,
+        capability: str,
+        outcome: int,
+        timestamp: int,
+        trace_signature_hex: str,
+    ) -> dict:
+        """Build an unsigned MsgAnchorTrace transaction body."""
+        msg = self._cosmos_msg(
+            "/oasyce.anchor.v1.MsgAnchorTrace",
+            {
+                "signer": sender,
+                "trace_id": base64.b64encode(bytes.fromhex(trace_id_hex)).decode(),
+                "node_pubkey": base64.b64encode(bytes.fromhex(node_pubkey_hex)).decode(),
+                "capability": capability,
+                "outcome": outcome,
+                "timestamp": str(timestamp),
+                "trace_signature": base64.b64encode(bytes.fromhex(trace_signature_hex)).decode(),
+            },
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    def build_anchor_batch(
+        self,
+        sender: str,
+        traces: List[Dict[str, Any]],
+    ) -> dict:
+        """Build an unsigned MsgAnchorBatch transaction body.
+
+        Each trace dict must have: trace_id_hex, node_pubkey_hex,
+        capability, outcome, timestamp, trace_signature_hex.
+        Max 50 traces per batch.
+        """
+        anchor_msgs = []
+        for t in traces[:50]:
+            anchor_msgs.append({
+                "signer": sender,
+                "trace_id": base64.b64encode(bytes.fromhex(t["trace_id_hex"])).decode(),
+                "node_pubkey": base64.b64encode(bytes.fromhex(t["node_pubkey_hex"])).decode(),
+                "capability": t["capability"],
+                "outcome": t["outcome"],
+                "timestamp": str(t["timestamp"]),
+                "trace_signature": base64.b64encode(bytes.fromhex(t["trace_signature_hex"])).decode(),
+            })
+        msg = self._cosmos_msg(
+            "/oasyce.anchor.v1.MsgAnchorBatch",
+            {"signer": sender, "anchors": anchor_msgs},
+        )
+        return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
 
     # ------------------------------------------------------------------
     # Utility

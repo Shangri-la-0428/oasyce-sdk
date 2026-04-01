@@ -287,3 +287,23 @@ class PowResult:
     difficulty: int
     hash_hex: str
     attempts: int
+
+
+# ---------------------------------------------------------------------------
+# Anchor (Thronglets → Chain trace anchoring)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AnchorRecord:
+    """A Thronglets trace anchor stored on the Oasyce chain.
+
+    Provides immutable proof that a trace existed at a given block height.
+    ~110 bytes per record on-chain.
+    """
+    trace_id: str  # hex-encoded 32-byte trace identifier
+    node_pubkey: str  # hex-encoded ed25519 public key
+    capability: str
+    outcome: int  # 0=unspecified, 1=succeeded, 2=failed, 3=partial, 4=timeout
+    timestamp: int  # unix milliseconds
+    anchor_height: int  # block height when anchored
+    trace_signature: str  # hex-encoded ed25519 signature

@@ -366,6 +366,71 @@ def report_issue(title: str, body: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Anchor — Thronglets trace verification on-chain
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def check_anchor(trace_id: str) -> str:
+    """Check if a Thronglets trace has been anchored on the Oasyce chain.
+
+    Args:
+        trace_id: Hex-encoded 64-character trace ID from Thronglets
+
+    Returns whether the trace is anchored and, if so, the full anchor record
+    (capability, outcome, timestamp, block height).
+    """
+    try:
+        if len(trace_id) != 64:
+            return json.dumps({"error": "trace_id must be 64 hex characters (32 bytes)"})
+        anchored = _client.is_anchored(trace_id)
+        if not anchored:
+            return json.dumps({"trace_id": trace_id, "anchored": False})
+        record = _client.get_anchor(trace_id)
+        return json.dumps({
+            "trace_id": record.trace_id,
+            "anchored": True,
+            "capability": record.capability,
+            "outcome": record.outcome,
+            "timestamp": record.timestamp,
+            "anchor_height": record.anchor_height,
+            "node_pubkey": record.node_pubkey,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def list_anchors_by_capability(capability: str, limit: int = 20) -> str:
+    """List Thronglets traces anchored on-chain for a specific capability.
+
+    Args:
+        capability: Capability identifier (e.g. "urn:mcp:anthropic:claude:code")
+        limit: Max records to return (default 20, max 100)
+
+    Shows which traces have been verified on-chain for a given AI service.
+    """
+    try:
+        limit = min(max(1, limit), 100)
+        records = _client.anchors_by_capability(capability, limit=limit)
+        result = []
+        for r in records:
+            result.append({
+                "trace_id": r.trace_id,
+                "outcome": r.outcome,
+                "timestamp": r.timestamp,
+                "anchor_height": r.anchor_height,
+            })
+        return json.dumps({
+            "capability": capability,
+            "anchors": result,
+            "count": len(result),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Write tools — require OASYCE_MNEMONIC env var
 # ---------------------------------------------------------------------------
 
@@ -662,6 +727,48 @@ def register_executor(task_types: str, max_compute_units: int = 1000) -> str:
     try:
         types = [t.strip() for t in task_types.split(",") if t.strip()]
         return _tx_result(_get_signer().register_executor(types, max_compute_units))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Anchor — write (requires OASYCE_MNEMONIC)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def anchor_trace(
+    trace_id: str,
+    node_pubkey: str,
+    capability: str,
+    outcome: int,
+    timestamp: int,
+    trace_signature: str,
+) -> str:
+    """Anchor a Thronglets trace on the Oasyce chain as immutable proof.
+
+    Args:
+        trace_id: Hex-encoded 64-char trace ID
+        node_pubkey: Hex-encoded ed25519 public key of the Thronglets node
+        capability: Capability identifier (e.g. "urn:mcp:anthropic:claude:code")
+        outcome: Outcome code (1=succeeded, 2=failed, 3=partial, 4=timeout)
+        timestamp: Trace creation time in unix milliseconds
+        trace_signature: Hex-encoded ed25519 signature over the trace
+
+    Requires OASYCE_MNEMONIC. Signer must match sha256(node_pubkey)[:20].
+    ~110 bytes stored on-chain per anchor. Duplicates are rejected.
+    """
+    try:
+        if len(trace_id) != 64:
+            return json.dumps({"error": "trace_id must be 64 hex characters"})
+        return _tx_result(_get_signer().anchor_trace(
+            trace_id_hex=trace_id,
+            node_pubkey_hex=node_pubkey,
+            capability=capability,
+            outcome=outcome,
+            timestamp=timestamp,
+            trace_signature_hex=trace_signature,
+        ))
     except Exception as e:
         return json.dumps({"error": str(e)})
 

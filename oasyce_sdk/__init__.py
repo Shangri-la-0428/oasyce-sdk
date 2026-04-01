@@ -23,6 +23,7 @@ from .errors import (
 from .types import (
     AccessLevel,
     Account,
+    AnchorRecord,
     Balance,
     Block,
     BondingCurve,
@@ -44,7 +45,7 @@ from .types import (
     TxResult,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __all__ = [
     "OasyceClient",
@@ -62,6 +63,7 @@ __all__ = [
     # Types
     "AccessLevel",
     "Account",
+    "AnchorRecord",
     "Balance",
     "Block",
     "BondingCurve",

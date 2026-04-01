@@ -52,7 +52,7 @@ signer.submit_feedback("INV_0000000000000001", rating=5, comment="fast")
 
 ## MCP Server
 
-让你的 AI 助手（Claude Desktop / Cursor / Windsurf）直接操作 Oasyce 链。25 个工具（11 读 + 14 写）。
+让你的 AI 助手（Claude Desktop / Cursor / Windsurf）直接操作 Oasyce 链。28 个工具（13 读 + 15 写）。
 
 配置 `claude_desktop_config.json`：
 
@@ -71,9 +71,9 @@ signer.submit_feedback("INV_0000000000000001", rating=5, comment="fast")
 }
 ```
 
-**读工具**：健康检查、领水龙头、查余额、查 agent 档案、浏览市场、列出能力、查信誉、查数据资产、查开放任务、提 issue。
+**读工具**：健康检查、领水龙头、查余额、查 agent 档案、浏览市场、列出能力、查信誉、查数据资产、查开放任务、提 issue、**查锚定记录**、**按能力列出锚定**。
 
-**写工具**（需要 `OASYCE_MNEMONIC`）：创建钱包、转账、自注册、注册能力、调用能力、完成/领取/争议调用、注册数据资产、买卖股份、提交评价、注册执行者。
+**写工具**（需要 `OASYCE_MNEMONIC`）：创建钱包、转账、自注册、注册能力、调用能力、完成/领取/争议调用、注册数据资产、买卖股份、提交评价、注册执行者、**锚定 Thronglets trace**。
 
 ## LangChain Tools
 

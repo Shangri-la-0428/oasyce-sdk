@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.1] - 2026-04-01
+
+### Added
+
+- **Anchor module** — Thronglets → Chain trace anchoring bridge
+  - `AnchorRecord` dataclass in `types.py`
+  - Query methods: `get_anchor()`, `is_anchored()`, `anchors_by_capability()`, `anchors_by_node()`
+  - TX builders: `build_anchor_trace()`, `build_anchor_batch()` (max 50/tx)
+  - `NativeSigner` convenience: `anchor_trace()`, `anchor_batch()`
+  - 3 MCP tools: `check_anchor` (read), `list_anchors_by_capability` (read), `anchor_trace` (write)
+  - 10 new tests (66 total)
+
+### Changed
+
+- **MCP tools**: 13 read + 15 write = 28 total (was 25)
+
 ## [0.5.0] - 2026-03-28
 
 ### Added

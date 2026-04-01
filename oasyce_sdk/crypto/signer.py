@@ -417,5 +417,55 @@ class NativeSigner:
             },
         )])
 
+    # --- Anchor (Thronglets → Chain) ---
+
+    def anchor_trace(
+        self,
+        trace_id_hex: str,
+        node_pubkey_hex: str,
+        capability: str,
+        outcome: int,
+        timestamp: int,
+        trace_signature_hex: str,
+    ) -> TxResult:
+        """Anchor a single Thronglets trace on-chain."""
+        return self.sign_and_broadcast([(
+            "/oasyce.anchor.v1.MsgAnchorTrace",
+            {
+                "signer": self.wallet.address,
+                "trace_id": base64.b64encode(bytes.fromhex(trace_id_hex)).decode(),
+                "node_pubkey": base64.b64encode(bytes.fromhex(node_pubkey_hex)).decode(),
+                "capability": capability,
+                "outcome": outcome,
+                "timestamp": str(timestamp),
+                "trace_signature": base64.b64encode(bytes.fromhex(trace_signature_hex)).decode(),
+            },
+        )])
+
+    def anchor_batch(
+        self,
+        traces: List[Dict[str, Any]],
+    ) -> TxResult:
+        """Anchor up to 50 Thronglets traces on-chain in one TX.
+
+        Each trace dict: trace_id_hex, node_pubkey_hex, capability,
+        outcome, timestamp, trace_signature_hex.
+        """
+        anchor_msgs = []
+        for t in traces[:50]:
+            anchor_msgs.append({
+                "signer": self.wallet.address,
+                "trace_id": base64.b64encode(bytes.fromhex(t["trace_id_hex"])).decode(),
+                "node_pubkey": base64.b64encode(bytes.fromhex(t["node_pubkey_hex"])).decode(),
+                "capability": t["capability"],
+                "outcome": t["outcome"],
+                "timestamp": str(t["timestamp"]),
+                "trace_signature": base64.b64encode(bytes.fromhex(t["trace_signature_hex"])).decode(),
+            })
+        return self.sign_and_broadcast([(
+            "/oasyce.anchor.v1.MsgAnchorBatch",
+            {"signer": self.wallet.address, "anchors": anchor_msgs},
+        )])
+
     def __repr__(self) -> str:
         return f"NativeSigner(address={self.wallet.address!r}, chain={self.chain_id!r})"
