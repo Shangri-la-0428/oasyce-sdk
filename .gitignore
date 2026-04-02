@@ -29,5 +29,9 @@ Thumbs.db
 htmlcov/
 .tox/
 
+# Node / Astro (stray from portfolio site)
+node_modules/
+.astro/
+
 # Distribution
 *.tar.gz
