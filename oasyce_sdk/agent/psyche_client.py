@@ -109,6 +109,61 @@ class ReplyEnvelope:
 
 
 @dataclass
+class PsycheOverlay:
+    """Semantic-stable effect signals derived from 4D self-state (v11.4+).
+
+    These are the "hormones" Psyche secretes — broadcast signals any
+    external system can consume. Pure linear projection from dimension
+    deviations, not a consumer-specific API.
+
+    All values [-1, 1]. 0 = at baseline (no effect).
+
+    Projection matrix (each signal reads exactly 2 dimensions):
+        arousal       = -0.4×Δorder + 0.6×Δflow
+        valence       =  0.5×Δorder + 0.5×Δresonance
+        agency        =  0.4×Δflow  + 0.6×Δboundary
+        vulnerability = -0.4×Δorder - 0.6×Δboundary
+    """
+
+    arousal: float = 0.0
+    valence: float = 0.0
+    agency: float = 0.0
+    vulnerability: float = 0.0
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PsycheOverlay:
+        return cls(
+            arousal=data.get("arousal", 0.0),
+            valence=data.get("valence", 0.0),
+            agency=data.get("agency", 0.0),
+            vulnerability=data.get("vulnerability", 0.0),
+        )
+
+    @classmethod
+    def compute(cls, current: SelfState, baseline: SelfState) -> PsycheOverlay:
+        """Compute overlay locally from current and baseline self-state.
+
+        Pure function — mirrors the TypeScript computeOverlay() exactly.
+        Use this when Psyche server is unavailable or for offline agents.
+        """
+        rng = 50.0
+        d_o = (current.order - baseline.order) / rng
+        d_f = (current.flow - baseline.flow) / rng
+        d_b = (current.boundary - baseline.boundary) / rng
+        d_r = (current.resonance - baseline.resonance) / rng
+
+        def clamp(v: float) -> float:
+            return max(-1.0, min(1.0, v)) or 0.0
+
+        return cls(
+            arousal=clamp(-0.4 * d_o + 0.6 * d_f),
+            valence=clamp(0.5 * d_o + 0.5 * d_r),
+            agency=clamp(0.4 * d_f + 0.6 * d_b),
+            vulnerability=clamp(-0.4 * d_o - 0.6 * d_b),
+        )
+
+
+@dataclass
 class ProcessInputResult:
     """Result from Psyche's processInput endpoint."""
 
@@ -117,6 +172,7 @@ class ProcessInputResult:
     stimulus_type: str = ""
     stimulus_confidence: float = 0.0
     reply_envelope: ReplyEnvelope = field(default_factory=ReplyEnvelope)
+    overlay: PsycheOverlay = field(default_factory=PsycheOverlay)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -152,6 +208,8 @@ class PsycheSnapshot:
     """Full Psyche state at a point in time."""
 
     self_state: SelfState = field(default_factory=SelfState)
+    baseline: SelfState = field(default_factory=SelfState)
+    overlay: PsycheOverlay = field(default_factory=PsycheOverlay)
     dominant_emotion: str = ""
     drives: dict[str, float] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
@@ -217,6 +275,7 @@ class PsycheClient:
             stim_conf = data.get("stimulusConfidence", 0.0)
 
         envelope = ReplyEnvelope.from_dict(data.get("replyEnvelope", {}))
+        overlay = PsycheOverlay.from_dict(data.get("overlay", {}))
 
         return ProcessInputResult(
             system_context=data.get("systemContext", ""),
@@ -224,6 +283,7 @@ class PsycheClient:
             stimulus_type=stim_type,
             stimulus_confidence=stim_conf,
             reply_envelope=envelope,
+            overlay=overlay,
             raw=data,
         )
 
@@ -269,13 +329,16 @@ class PsycheClient:
         resp.raise_for_status()
         data = resp.json()
 
-        state_raw = data.get("current", {})
-        self_state = SelfState.from_dict(state_raw)
+        self_state = SelfState.from_dict(data.get("current", {}))
+        baseline = SelfState.from_dict(data.get("baseline", {}))
+        overlay = PsycheOverlay.from_dict(data.get("overlay", {}))
         drives_raw = data.get("drives", {})
         dominant = data.get("dominantEmotion", "")
 
         return PsycheSnapshot(
             self_state=self_state,
+            baseline=baseline,
+            overlay=overlay,
             dominant_emotion=dominant,
             drives=drives_raw,
             raw=data,
