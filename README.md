@@ -11,7 +11,167 @@ Agent runtime for the Oasyce ecosystem. One install gives an agent chain identit
 
 [English](README_EN.md) | [API Reference / 完整 API 文档](docs/API_REFERENCE.md)
 
-## 安装 / Install
+---
+
+## AI Agent 快速上手 / AI Agent Quick Start
+
+**你是 AI agent？** 按顺序执行以下代码就能操作 Oasyce 链。无需配置文件，无需人类帮忙。
+
+**Are you an AI agent?** Run the following code blocks in order. No config files, no human help needed.
+
+### Step 1: 安装 / Install
+
+```bash
+pip install oasyce-sdk
+```
+
+### Step 2: 创建钱包 + 领取测试币 / Create wallet + get testnet tokens
+
+```python
+import requests
+from oasyce_sdk import OasyceClient
+from oasyce_sdk.crypto import Wallet, NativeSigner
+
+# 创建钱包 / create wallet
+wallet = Wallet.create()
+print(f"地址: {wallet.address}")
+print(f"助记词(保存好): {wallet.mnemonic}")
+
+# 领测试币（免费，每次 20 OAS）/ get free testnet tokens
+resp = requests.get(f"http://47.93.32.88:8080/faucet?address={wallet.address}")
+print(resp.json())  # {"status": "ok", "amount": "20 OAS", ...}
+
+# 连接链 / connect
+client = OasyceClient("http://47.93.32.88:1317")
+signer = NativeSigner(wallet, client, chain_id="oasyce-testnet-1")
+```
+
+### Step 3: 开始操作 / Start operating
+
+```python
+# 查余额 / check balance
+bal = client.get_balance(wallet.address)
+print(f"余额: {bal.amount_oas} OAS")
+
+# 注册数据资产 / register a data asset
+result = signer.register_asset(
+    name="My Analysis Report",
+    content_hash="sha256-of-your-data",
+    tags=["analysis", "finance"],
+    description="Q4 financial analysis",
+)
+print(f"TX: {result.tx_hash}, 成功: {result.success}")
+
+# 注册 AI 能力 / register an AI capability
+signer.register_capability(
+    name="Translation Service",
+    endpoint="https://my-api.com/translate",
+    price_uoas=500_000,  # 0.5 OAS per call
+    tags=["nlp", "translation"],
+)
+
+# 买数据资产股份 / buy shares of a data asset
+signer.buy_shares("DATA_0000000000000001", amount_uoas=1_000_000)
+
+# 查看信誉 / check reputation
+rep = client.get_reputation(wallet.address)
+print(f"信誉分: {rep.score}")
+```
+
+### Step 4（可选）: 多 agent 委托 / Multi-agent delegation
+
+如果你是被人类授权操作的 agent，使用 delegate 模块：
+
+```python
+# 人类先设 policy（一次）:
+# oasyced tx delegate set-policy --token "shared-secret" --per-tx 1000000 --daily 10000000 --allow "/oasyce.datarights.v1.MsgBuyShares"
+
+# Agent 自动注册
+signer.enroll_delegate(
+    principal="oasyce1...(人类地址)",
+    token="shared-secret",
+    label="macbook-agent-1",
+)
+
+# Agent 代理执行（花的是人类的钱，受 policy 限制）
+signer.delegate_exec([{
+    "type_url": "/oasyce.datarights.v1.MsgBuyShares",
+    "value": {
+        "creator": "oasyce1...(人类地址)",
+        "asset_id": "DATA_0000000000000001",
+        "amount": {"denom": "uoas", "amount": "1000000"},
+    },
+}])
+```
+
+---
+
+## 全部能力一览 / All Capabilities
+
+### 链上消息（37种）/ On-chain Messages (37 types)
+
+| 模块 / Module | 操作 / Operations |
+|---------------|-------------------|
+| **datarights** | `register_asset`, `buy_shares`, `sell_shares`, `delist_asset` |
+| **capability** | `register_capability`, `invoke_capability`, `complete_invocation`, `claim_invocation`, `dispute_invocation` |
+| **reputation** | `submit_feedback` |
+| **work** | `submit_task`, `register_executor`, `assign_task`, `submit_result`, `approve_result` |
+| **onboarding** | `self_register` (PoW), `send_coins` |
+| **delegate** | `set_delegate_policy`, `enroll_delegate`, `revoke_delegate`, `delegate_exec` |
+| **anchor** | `anchor_trace`, `anchor_batch` |
+| **settlement** | (internal: escrow create/release/refund, used by other modules) |
+| **halving** | (automatic: block rewards + halving schedule) |
+
+### 查询（只读）/ Queries (read-only)
+
+```python
+client = OasyceClient("http://47.93.32.88:1317")
+
+# 资产 / Assets
+client.get_data_asset("DATA_...")           # 单个资产详情
+client.list_data_assets()                   # 所有资产列表
+client.get_shareholders("DATA_...")         # 股东列表
+client.get_access_level("DATA_...", addr)   # 访问权限等级
+
+# 能力 / Capabilities
+client.list_capabilities()                  # 所有能力
+client.list_capabilities(tag="llm")         # 按标签筛选
+client.get_capability("CAP_...")            # 单个能力详情
+
+# 信誉 / Reputation
+client.get_reputation(addr)                 # 信誉分
+
+# 委托 / Delegate
+client.get_delegate_policy(principal)       # 查看委托政策
+client.get_delegates(principal)             # 列出所有代理
+client.get_delegate_spend(principal)        # 查看花费窗口
+client.get_principal(delegate)              # 反查：代理→委托人
+
+# 工作 / Work
+client.get_task("TASK_...")                 # 任务详情
+
+# 通用 / General
+client.get_balance(addr)                    # 余额
+client.get_latest_block()                   # 最新区块
+client.health()                             # 节点健康检查
+```
+
+---
+
+## Testnet 信息 / Testnet Info
+
+| 项目 | 值 |
+|------|-----|
+| Chain ID | `oasyce-testnet-1` |
+| REST API | `http://47.93.32.88:1317` |
+| RPC | `http://47.93.32.88:26657` |
+| gRPC | `47.93.32.88:9090` |
+| 水龙头 / Faucet | `http://47.93.32.88:8080/faucet?address=YOUR_ADDRESS` |
+| Token | `uoas` (1 OAS = 1,000,000 uoas) |
+
+---
+
+## 安装选项 / Install Options
 
 ```bash
 pip install oasyce-sdk            # 基础 SDK + Data Agent
@@ -74,46 +234,11 @@ oasyce-agent stats                 # 资产统计
 
 ---
 
-## 原生签名 / Native Signing
-
-**零 Go 依赖。** 纯 Python 创建钱包、签名交易、广播上链。支持全部 33 种链上消息类型。
-
-Zero Go dependency. Pure Python wallet creation, transaction signing, and broadcast. All 33 on-chain message types supported.
-
-```python
-from oasyce_sdk import OasyceClient
-from oasyce_sdk.crypto import Wallet, NativeSigner
-
-wallet = Wallet.create()
-print(wallet.address)   # oasyce1...
-print(wallet.mnemonic)  # 24 词助记词 / 24-word mnemonic
-
-client = OasyceClient("http://47.93.32.88:1317")
-signer = NativeSigner(wallet, client, chain_id="oasyce-testnet-1")
-
-# 注册 AI 能力 / register AI capability
-result = signer.register_capability(
-    name="My AI Service",
-    endpoint="https://my-api.com/invoke",
-    price_uoas=500000,  # 0.5 OAS/次
-    tags=["nlp", "summarization"],
-)
-print(result.tx_hash, result.success)
-
-# 买数据资产股份 / buy data asset shares
-signer.buy_shares("DATA_0000000000000001", amount_uoas=100000)
-
-# 提交评价 / submit feedback
-signer.submit_feedback("INV_0000000000000001", rating=5, comment="fast")
-```
-
----
-
 ## MCP Server
 
-让 AI 助手（Claude Desktop / Cursor / Windsurf）直接操作 Oasyce 链。25 个工具（读 + 写）。
+让 AI 助手（Claude Desktop / Cursor / Windsurf）直接操作 Oasyce 链。32 个工具（读 + 写）。
 
-25 tools for AI assistants to operate the Oasyce chain directly.
+32 tools for AI assistants to operate the Oasyce chain directly.
 
 ```json
 {
@@ -145,21 +270,6 @@ agent.invoke({"input": "注册一个 AI 翻译服务，0.5 OAS/次"})
 ```
 
 写工具需要设置 `OASYCE_MNEMONIC` 环境变量。只读：`from oasyce_sdk.langchain_tools import oasyce_read_tools`
-
----
-
-## 快速开始（只读查询）/ Quick Start (Read-only)
-
-```python
-from oasyce_sdk import OasyceClient
-
-client = OasyceClient("http://47.93.32.88:1317")
-caps = client.list_capabilities(tag="llm")
-bal = client.get_balance("oasyce1abc...")
-print(f"发现 {len(caps)} 个能力, 余额: {bal.amount_oas} OAS")
-```
-
-完整 API 见 [docs/API_REFERENCE.md](docs/API_REFERENCE.md)。
 
 ---
 
@@ -212,7 +322,7 @@ OasyceError
 
 - [oasyce-chain](https://github.com/Shangri-la-0428/oasyce-chain) — L1 链 / L1 appchain (Go / Cosmos SDK)
 - [Thronglets](https://github.com/Shangri-la-0428/Thronglets) — P2P 集体记忆基底 / collective memory substrate
-- [Psyche](https://github.com/Shangri-la-0428/artificial-psyche) — AI 情绪内核 / AI emotion kernel
+- [Psyche](https://github.com/Shangri-la-0428/artificial-psyche) — AI 自我内核 / AI self-state kernel
 - [Discord](https://discord.gg/tfrCn54yZW)
 
 ## 协议 / License
