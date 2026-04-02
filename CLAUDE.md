@@ -1,6 +1,25 @@
-# oasyce-sdk -- AI Agent Integration Guide
+# oasyce-sdk — Loop Runtime
 
-> This file is the source of truth for AI tool integration. It is read automatically by Claude Code (CLAUDE.md), Cursor (.cursorrules), Windsurf (.windsurfrules), and any AI tool that supports project-level instructions.
+> **Sigil role**: Necessary subsystem — the Loop execution substrate. Instantiates abstract Loops as concrete processes. Manages Sigils as first-class identities.
+> See [Oasyce-Sigil/ARCHITECTURE.md](../Oasyce-Sigil/ARCHITECTURE.md) for how this fits the whole.
+
+## Sigil Architecture Context
+
+The SDK is where Loops run. In Sigil terms:
+- **Sigil management**: Create, fork, bond, dissolve (via chain transactions)
+- **Loop execution**: The agent runtime IS a running Loop — state (wallet + memory) → perceive → act → update state
+- **Wallet is not identity**: Wallet (secp256k1 keypair) is the cryptographic anchor of a Sigil, not the Sigil itself. The Sigil is the full causal history attached to that key.
+
+### Sigil Roadmap
+- [ ] `SigilManager` class — create, fork, bond, dissolve (wrapping chain tx)
+- [ ] Wallet becomes internal implementation detail of Sigil
+- [ ] Absorb oasyce-net CLI into this SDK (single `oas` command)
+- [ ] Deprecate Ed25519 wallet (oasyce-net legacy), secp256k1 only
+- [ ] MCP tools: add Sigil lifecycle operations
+
+---
+
+> Source of truth for AI tool integration. Read by Claude Code, Cursor, Windsurf, and any AI tool that supports project-level instructions.
 
 Python SDK for the Oasyce L1 chain. Three entry points: chain SDK (programmatic), data agent (CLI), and agent runtime (feedback loop).
 
