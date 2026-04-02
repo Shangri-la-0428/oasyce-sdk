@@ -472,5 +472,77 @@ class NativeSigner:
             {"signer": self.wallet.address, "anchors": anchor_msgs},
         )])
 
+    # --- Delegate (multi-agent delegation) ---
+
+    def set_delegate_policy(
+        self,
+        token: str,
+        allowed_msgs: List[str],
+        per_tx_uoas: int = 1_000_000,
+        window_uoas: int = 10_000_000,
+        window_seconds: int = 86400,
+        expiration_seconds: int = 0,
+    ) -> TxResult:
+        """Set delegation policy. One command — all agents operate under this."""
+        return self.sign_and_broadcast([(
+            "/oasyce.delegate.v1.MsgSetPolicy",
+            {
+                "principal": self.wallet.address,
+                "per_tx_limit": {"denom": "uoas", "amount": str(per_tx_uoas)},
+                "window_limit": {"denom": "uoas", "amount": str(window_uoas)},
+                "window_seconds": str(window_seconds),
+                "allowed_msgs": allowed_msgs,
+                "enrollment_token": token,
+                "expiration_seconds": str(expiration_seconds),
+            },
+        )])
+
+    def enroll_delegate(
+        self,
+        principal: str,
+        token: str,
+        label: str = "",
+    ) -> TxResult:
+        """Enroll as delegate under a principal. Agent auto-runs this."""
+        return self.sign_and_broadcast([(
+            "/oasyce.delegate.v1.MsgEnroll",
+            {
+                "delegate": self.wallet.address,
+                "principal": principal,
+                "token": token,
+                "label": label,
+            },
+        )])
+
+    def revoke_delegate(self, delegate: str) -> TxResult:
+        """Remove a delegate from your policy (principal only)."""
+        return self.sign_and_broadcast([(
+            "/oasyce.delegate.v1.MsgRevoke",
+            {
+                "principal": self.wallet.address,
+                "delegate": delegate,
+            },
+        )])
+
+    def delegate_exec(self, msgs: List[Dict[str, Any]]) -> TxResult:
+        """Execute messages on behalf of principal.
+
+        Each msg dict: {"type_url": "/oasyce...", "value": {...}}.
+        The value is the proto JSON body of the inner message.
+        """
+        packed = []
+        for m in msgs:
+            packed.append({
+                "@type": m["type_url"],
+                **m["value"],
+            })
+        return self.sign_and_broadcast([(
+            "/oasyce.delegate.v1.MsgExec",
+            {
+                "delegate": self.wallet.address,
+                "msgs": packed,
+            },
+        )])
+
     def __repr__(self) -> str:
         return f"NativeSigner(address={self.wallet.address!r}, chain={self.chain_id!r})"

@@ -307,3 +307,36 @@ class AnchorRecord:
     timestamp: int  # unix milliseconds
     anchor_height: int  # block height when anchored
     trace_signature: str  # hex-encoded ed25519 signature
+
+
+# ---------------------------------------------------------------------------
+# Delegate (multi-agent delegation)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DelegatePolicy:
+    """A principal's delegation policy governing all enrolled agents."""
+    principal: str
+    per_tx_limit_uoas: int
+    window_limit_uoas: int
+    window_seconds: int
+    allowed_msgs: List[str]
+    expiration_seconds: int
+    created_at_seconds: int
+
+
+@dataclass(frozen=True)
+class DelegateRecord:
+    """An enrolled delegate (agent) operating under a principal."""
+    delegate: str
+    principal: str
+    label: str
+    enrolled_at_seconds: int
+
+
+@dataclass(frozen=True)
+class SpendWindow:
+    """Current spending window for a principal's delegates."""
+    principal: str
+    window_start: int
+    spent_uoas: int

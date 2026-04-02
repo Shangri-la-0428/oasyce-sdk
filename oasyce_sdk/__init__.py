@@ -43,7 +43,7 @@ from .types import (
     TxResult,
 )
 
-__version__ = "0.8.4"
+__version__ = "0.10.0"
 
 __all__ = [
     "OasyceClient",

@@ -1,4 +1,4 @@
-"""Oasyce MCP Server — 25 tools (11 read + 14 write) for AI agent chain operations.
+"""Oasyce MCP Server — 32 tools for AI agent chain operations.
 
 Install:
     pip install oasyce-sdk[mcp]
@@ -769,6 +769,153 @@ def anchor_trace(
             timestamp=timestamp,
             trace_signature_hex=trace_signature,
         ))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Delegate (multi-agent delegation)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_delegate_policy(principal: str) -> str:
+    """Query a principal's delegation policy.
+
+    Args:
+        principal: Bech32 address of the principal account
+    """
+    try:
+        p = _client.get_delegate_policy(principal)
+        return json.dumps({
+            "principal": p.principal,
+            "per_tx_limit_uoas": p.per_tx_limit_uoas,
+            "window_limit_uoas": p.window_limit_uoas,
+            "window_seconds": p.window_seconds,
+            "allowed_msgs": p.allowed_msgs,
+            "expiration_seconds": p.expiration_seconds,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def list_delegates(principal: str) -> str:
+    """List all delegates enrolled under a principal.
+
+    Args:
+        principal: Bech32 address of the principal account
+    """
+    try:
+        records = _client.get_delegates(principal)
+        return json.dumps([{
+            "delegate": r.delegate,
+            "principal": r.principal,
+            "label": r.label,
+        } for r in records], indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_delegate_spend(principal: str) -> str:
+    """Query current spending window for a principal's delegates.
+
+    Args:
+        principal: Bech32 address of the principal account
+    """
+    try:
+        w = _client.get_delegate_spend(principal)
+        return json.dumps({
+            "principal": w.principal,
+            "window_start": w.window_start,
+            "spent_uoas": w.spent_uoas,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_principal(delegate: str) -> str:
+    """Query which principal a delegate belongs to (reverse lookup).
+
+    Args:
+        delegate: Bech32 address of the delegate agent
+    """
+    try:
+        principal = _client.get_principal(delegate)
+        return json.dumps({"principal": principal})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def set_delegate_policy(
+    token: str,
+    allowed_msgs: str,
+    per_tx_uoas: int = 1_000_000,
+    window_uoas: int = 10_000_000,
+    window_seconds: int = 86400,
+    expiration_seconds: int = 0,
+) -> str:
+    """Set delegation policy. One command — all agents operate under this.
+
+    Args:
+        token: Shared enrollment token (agents use this to self-register)
+        allowed_msgs: Comma-separated list of allowed msg type URLs
+        per_tx_uoas: Max spend per transaction in uoas (default 1 OAS)
+        window_uoas: Budget window limit in uoas (default 10 OAS)
+        window_seconds: Budget window duration in seconds (default 86400 = 1 day)
+        expiration_seconds: Policy expiration in seconds (0 = no expiry)
+
+    Requires OASYCE_MNEMONIC. Signer becomes the principal.
+    """
+    try:
+        msgs = [m.strip() for m in allowed_msgs.split(",")]
+        return _tx_result(_get_signer().set_delegate_policy(
+            token=token,
+            allowed_msgs=msgs,
+            per_tx_uoas=per_tx_uoas,
+            window_uoas=window_uoas,
+            window_seconds=window_seconds,
+            expiration_seconds=expiration_seconds,
+        ))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def enroll_delegate(principal: str, token: str, label: str = "") -> str:
+    """Enroll as delegate under a principal. Agent auto-runs this on first start.
+
+    Args:
+        principal: Bech32 address of the principal account
+        token: Enrollment token from the principal
+        label: Optional label (e.g. 'macbook-agent-1')
+
+    Requires OASYCE_MNEMONIC. Signer becomes the delegate.
+    """
+    try:
+        return _tx_result(_get_signer().enroll_delegate(
+            principal=principal,
+            token=token,
+            label=label,
+        ))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def revoke_delegate(delegate: str) -> str:
+    """Remove a delegate from your policy (principal only).
+
+    Args:
+        delegate: Bech32 address of the delegate to revoke
+
+    Requires OASYCE_MNEMONIC. Signer must be the principal.
+    """
+    try:
+        return _tx_result(_get_signer().revoke_delegate(delegate))
     except Exception as e:
         return json.dumps({"error": str(e)})
 

@@ -2,7 +2,17 @@
 
 > This file is the source of truth for AI tool integration. It is read automatically by Claude Code (CLAUDE.md), Cursor (.cursorrules), Windsurf (.windsurfrules), and any AI tool that supports project-level instructions.
 
-Python SDK for the Oasyce L1 chain. Two entry points: chain SDK (programmatic) and data agent (CLI).
+Python SDK for the Oasyce L1 chain. Three entry points: chain SDK (programmatic), data agent (CLI), and agent runtime (feedback loop).
+
+## You Are an Oasyce Agent
+
+If Thronglets MCP tools are available, you are part of the collective:
+- **Before deciding**: call `substrate_query` with the task context. The collective tells you what has worked.
+- **After acting**: call `trace_record` with the outcome and capability name. The collective learns from you.
+
+If Psyche MCP is also available, call `process_input` before and `process_output` after to close the emotional feedback loop.
+
+Run `thronglets setup` to auto-configure all AI tools on this machine.
 
 ## Install
 
@@ -64,6 +74,23 @@ Only files with `privacy_risk == "safe"` auto-register. No exceptions.
 - `~/.oasyce/agent.pid` -- daemon PID
 - `~/.oasyce/agent.log` -- daemon logs
 
+## Agent Runtime
+
+The feedback loop for Python agents. AgentRuntime = wallet + Psyche + Thronglets.
+
+```python
+from oasyce_sdk.agent.runtime import AgentRuntime
+
+agent = AgentRuntime()
+perception = agent.perceive("analyze financial data")  # read collective + emotional state
+# ... decide ...
+agent.act("analyzed Q4", "succeeded", "finance", capability="data-analysis")  # write back
+```
+
+Two methods. Four HTTP calls per cycle. Degrades gracefully if Psyche or Thronglets is unavailable.
+
+For MCP-native AI tools (Claude Code, Cursor, Codex), use Thronglets MCP directly — no AgentRuntime needed. Run `thronglets setup` to auto-configure.
+
 ## Chain SDK
 
 ```python
@@ -79,15 +106,17 @@ signer.register_capability(name="My API", endpoint="https://...", price_uoas=500
 signer.buy_shares("DATA_0000000000000001", amount_uoas=100000)
 ```
 
-Zero Go dependency. Pure Python secp256k1 signing + hand-rolled protobuf. Supports all 33 chain message types.
+Zero Go dependency. Pure Python secp256k1 signing + hand-rolled protobuf. Supports all 37 chain message types including delegate module (set_delegate_policy, enroll_delegate, revoke_delegate, delegate_exec).
 
 ## MCP Server
 
 ```bash
-oasyce-mcp    # stdio transport for Claude Desktop / Cursor / Windsurf
+oasyce-mcp    # stdio transport — 27 tools for chain operations
 ```
 
-28 tools (13 read + 15 write). Set `OASYCE_MNEMONIC` env var for write operations.
+32 chain tools (read + write), including 7 delegate tools. Set `OASYCE_MNEMONIC` env var for write operations.
+
+For collective intelligence (perceive/act), use Thronglets MCP directly: `thronglets setup`.
 
 ## LangChain Tools
 
@@ -105,6 +134,9 @@ oasyce_sdk/
   mcp_server.py       # MCP entry point
   langchain_tools.py  # LangChain entry point
   agent/
+    runtime.py        # AgentRuntime: perceive/act feedback loop
+    psyche_client.py  # Psyche HTTP client (stimulus, writeback, state)
+    thronglets_client.py  # Thronglets HTTP client (traces, signals, query)
     cli.py            # oasyce-agent CLI
     core.py           # daemon brain (wallet + PoW + scan + register loop)
     daemon.py         # cross-platform process management

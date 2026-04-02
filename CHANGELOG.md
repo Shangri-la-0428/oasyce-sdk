@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.10.0] - 2026-04-02
+
+### Added
+
+- **Delegate module support** — multi-agent delegation with shared budget
+  - `NativeSigner.set_delegate_policy()` — one command, all agents operate under this
+  - `NativeSigner.enroll_delegate()` — agent self-registers with enrollment token
+  - `NativeSigner.revoke_delegate()` — principal removes a delegate
+  - `NativeSigner.delegate_exec()` — execute messages on behalf of principal
+  - `OasyceClient.get_delegate_policy()` — query principal's delegation policy
+  - `OasyceClient.get_delegates()` — list enrolled delegates
+  - `OasyceClient.get_delegate_spend()` — query spending window status
+  - `OasyceClient.get_principal()` — reverse lookup delegate→principal
+  - 7 new MCP tools: `get_delegate_policy`, `list_delegates`, `get_delegate_spend`, `get_principal`, `set_delegate_policy`, `enroll_delegate`, `revoke_delegate`
+  - 3 new types: `DelegatePolicy`, `DelegateRecord`, `SpendWindow`
+
+## [0.9.1] - 2026-04-02
+
+### Changed
+
+- **oasyce-agent daemon** now participates in the collective — every scan cycle is a perceive/act cycle via AgentRuntime
+- **Architecture simplification** — removed oasyce-mcp perceive/act bridge layer; MCP-native agents use Thronglets MCP directly via `substrate_query`/`trace_record`
+- `thronglets setup` is now the recommended one-command install for all AI tools (Claude Code, Cursor, Codex)
+
+### Added
+
+- **Cursor adapter** in Thronglets — `thronglets setup` auto-detects and configures `~/.cursor/mcp.json`
+
+## [0.9.0] - 2026-04-02
+
+### Added
+
+- **AgentRuntime** — the feedback loop that closes the emergence gap
+  - `AgentRuntime` class: wallet + Psyche + Thronglets in one process
+  - `perceive(context)`: query collective traces → synthesize stimulus → inject into Psyche
+  - `act(action, outcome, context)`: record trace in Thronglets → writeback signals to Psyche
+  - Closes the Thronglets→Psyche→Decision feedback loop for emergent collective intelligence
+- **PsycheClient** — HTTP client for Psyche emotional engine
+  - `process_input()` with full ReplyEnvelope (SubjectivityKernel + ResponseContract)
+  - `process_output()` with writeback signals (trust_up/down, boundary_set, etc.)
+  - `get_state()`, `get_status_summary()`
+- **ThrongletsClient** — HTTP client for Thronglets P2P memory
+  - `query()` with SimHash context matching (resolve/evaluate/explore intents)
+  - `trace_record()` for recording execution traces
+  - `signal_feed()` and `signal_post()` for explicit signals
+- **29 new tests** covering pure functions, HTTP clients, runtime lifecycle, and two-agent feedback loop verification
+
 ## [0.8.2] - 2026-04-01
 
 ### Added

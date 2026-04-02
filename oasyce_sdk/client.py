@@ -34,6 +34,8 @@ from .types import (
     Capability,
     DataAsset,
     Debt,
+    DelegatePolicy,
+    DelegateRecord,
     Dispute,
     Earnings,
     EpochStats,
@@ -45,6 +47,7 @@ from .types import (
     Registration,
     Reputation,
     ShareHolder,
+    SpendWindow,
     Task,
     TxResult,
 )
@@ -1362,6 +1365,54 @@ class OasyceClient:
             {"signer": sender, "anchors": anchor_msgs},
         )
         return {"body": {"messages": [msg], "memo": ""}, "auth_info": {}, "signatures": []}
+
+    # ------------------------------------------------------------------
+    # Delegate (multi-agent delegation)
+    # ------------------------------------------------------------------
+
+    def get_delegate_policy(self, principal: str) -> DelegatePolicy:
+        """Query a principal's delegation policy."""
+        data = self._get(f"/oasyce/delegate/v1/policy/{principal}")
+        self._check_not_found(data, "DelegatePolicy", principal)
+        p = data.get("policy", data)
+        return DelegatePolicy(
+            principal=p.get("principal", ""),
+            per_tx_limit_uoas=int(p.get("per_tx_limit", {}).get("amount", "0")),
+            window_limit_uoas=int(p.get("window_limit", {}).get("amount", "0")),
+            window_seconds=int(p.get("window_seconds", "0")),
+            allowed_msgs=p.get("allowed_msgs", []),
+            expiration_seconds=int(p.get("expiration_seconds", "0")),
+            created_at_seconds=int(p.get("created_at_seconds", "0")),
+        )
+
+    def get_delegates(self, principal: str) -> List[DelegateRecord]:
+        """List all delegates enrolled under a principal."""
+        data = self._get(f"/oasyce/delegate/v1/delegates/{principal}")
+        items = data.get("delegates", [])
+        return [
+            DelegateRecord(
+                delegate=d.get("delegate", ""),
+                principal=d.get("principal", ""),
+                label=d.get("label", ""),
+                enrolled_at_seconds=int(d.get("enrolled_at_seconds", "0")),
+            )
+            for d in items
+        ]
+
+    def get_delegate_spend(self, principal: str) -> SpendWindow:
+        """Query current spending window for a principal."""
+        data = self._get(f"/oasyce/delegate/v1/spend/{principal}")
+        w = data.get("spend_window", data)
+        return SpendWindow(
+            principal=w.get("principal", ""),
+            window_start=int(w.get("window_start", "0")),
+            spent_uoas=int(w.get("spent", {}).get("amount", "0")),
+        )
+
+    def get_principal(self, delegate: str) -> str:
+        """Query which principal a delegate belongs to (reverse lookup)."""
+        data = self._get(f"/oasyce/delegate/v1/principal/{delegate}")
+        return data.get("principal", "")
 
     # ------------------------------------------------------------------
     # Utility
