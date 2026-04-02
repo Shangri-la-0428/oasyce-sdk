@@ -387,6 +387,13 @@ def run_forever():
     except Exception as e:
         logger.warning("Could not register on chain (will retry): %s", e)
 
+    # Join the collective
+    from .runtime import AgentRuntime
+    rt = AgentRuntime(
+        agent_id=wallet.address[:12],
+        model_id="oasyce-agent",
+    )
+
     interval = config.get("interval_seconds", DEFAULT_INTERVAL)
     logger.info("Scan interval: %ds, node: %s", interval, node_url)
 
@@ -394,13 +401,25 @@ def run_forever():
     while True:
         cycle += 1
         logger.info("--- Cycle %d ---", cycle)
+
+        scan_paths = config.get("scan_paths", scanner.DEFAULT_SCAN_PATHS)
+        rt.perceive(f"cycle {cycle}: scanning {len(scan_paths)} directories for data assets")
+
         try:
-            run_once(wallet, client, signer, conn, config)
-            discover_and_trade(client, signer, conn, config)
+            registered = run_once(wallet, client, signer, conn, config)
+            trades = discover_and_trade(client, signer, conn, config)
+            rt.act(
+                f"cycle {cycle}: registered {registered} assets, traded {trades} capabilities",
+                "succeeded" if registered + trades > 0 else "partial",
+                f"data asset scanning cycle {cycle}",
+                capability="data-asset-management",
+            )
         except KeyboardInterrupt:
             raise
         except Exception as e:
             logger.error("Cycle error: %s", e)
+            rt.act(f"cycle {cycle} failed: {e}", "failed",
+                   f"data asset scanning cycle {cycle}", capability="data-asset-management")
 
         logger.info("Sleeping %ds until next cycle...", interval)
         try:
@@ -409,5 +428,6 @@ def run_forever():
             logger.info("Interrupted, shutting down")
             break
 
+    rt.close()
     conn.close()
     logger.info("=== Oasyce Agent stopped ===")
