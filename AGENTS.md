@@ -9,6 +9,8 @@ When a user wants to use oasyce-sdk, guide them step by step. Adapt to what they
 
 ### Path A: "I want chain operations in my AI tool" (MCP)
 
+**Requires Python 3.10+ (recommend 3.11+).** Check with `python3 --version`.
+
 ```bash
 pip install oasyce-sdk[mcp]
 ```
@@ -68,7 +70,7 @@ loop.act("analyzed Q4", "succeeded", "finance")  # write trace + feedback
 Each project works independently:
 
 ```bash
-npx psyche-ai setup     # Psyche only — auto-configures MCP, zero config
+npx -y psyche-ai setup     # Psyche only — auto-configures MCP, zero config
 npx -y thronglets start  # Thronglets only — auto-detects AI tools, installs hooks
 ```
 
@@ -79,6 +81,8 @@ No oasyce-sdk needed. No chain dependency.
 ## Quick Reference
 
 ### Install
+
+Requires Python 3.10+ (recommend 3.11+).
 
 ```bash
 pip install oasyce-sdk            # base SDK + CLI agent

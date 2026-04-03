@@ -33,6 +33,14 @@ import os
 import sys
 from typing import Any
 
+if sys.version_info < (3, 10):
+    print(
+        f"oasyce-sdk requires Python 3.10+, got {sys.version}.\n"
+        "Install Python 3.11+ and retry: pip3.11 install oasyce-sdk[mcp]",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 try:
     from mcp.server.fastmcp import FastMCP
 except ImportError:
@@ -1127,8 +1135,35 @@ def fork_sigil(parent_sigil_id: str, child_public_key_hex: str, metadata: str = 
 # ---------------------------------------------------------------------------
 
 
+def _get_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("oasyce-sdk")
+    except Exception:
+        return "unknown"
+
+
 def main():
     """Run the Oasyce MCP server (stdio transport)."""
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg in ("--help", "-h"):
+            print(
+                "oasyce-mcp — Oasyce chain MCP server (stdio transport)\n"
+                f"Version: {_get_version()}\n"
+                f"Python:  {sys.version.split()[0]}\n"
+                f"Node:    {NODE_URL}\n\n"
+                "Usage: oasyce-mcp              # start server\n"
+                "       oasyce-mcp --version    # show version\n"
+                "       oasyce-mcp --help       # this message\n\n"
+                "Env: OASYCE_MNEMONIC (24-word BIP39, required for write ops)\n"
+                "     OASYCE_NODE    (REST endpoint, default: testnet)\n"
+                "     OASYCE_FAUCET  (faucet URL, default: testnet)"
+            )
+            return
+        if arg in ("--version", "-V"):
+            print(_get_version())
+            return
     mcp.run()
 
 
