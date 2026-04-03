@@ -2,6 +2,10 @@
 
 One process = one agent: wallet + psyche + thronglets.
 Two methods close the loop: perceive() reads, act() writes.
+
+NOTE: For new code, prefer ``SigilManager`` (oasyce_sdk.sigil).
+SigilManager is AgentRuntime + on-chain identity (Sigil lifecycle).
+AgentRuntime is kept for backward compatibility.
 """
 
 from __future__ import annotations

@@ -127,7 +127,7 @@ class OasyceGetAgentProfile(BaseTool):
             return json.dumps({"error": str(e)})
 
 
-class OasyecBrowseMarketplace(BaseTool):
+class OasyceBrowseMarketplace(BaseTool):
     name: str = "oasyce_browse_marketplace"
     description: str = (
         "Browse the Oasyce marketplace: AI services for sale, data assets "
@@ -423,7 +423,7 @@ oasyce_read_tools: List[BaseTool] = [
     OasyceGetBalance(),
     OasyceGetFaucetTokens(),
     OasyceGetAgentProfile(),
-    OasyecBrowseMarketplace(),
+    OasyceBrowseMarketplace(),
     OasyceListCapabilities(),
     OasyceGetReputation(),
     OasyceReportIssue(),

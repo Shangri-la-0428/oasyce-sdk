@@ -340,3 +340,41 @@ class SpendWindow:
     principal: str
     window_start: int
     spent_uoas: int
+
+
+# ---------------------------------------------------------------------------
+# Sigil Identity
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Sigil:
+    """A Sigil identity on the Oasyce chain."""
+    sigil_id: str
+    creator: str
+    public_key: str  # hex-encoded
+    status: str  # ACTIVE, DORMANT, DISSOLVED
+    creation_height: int
+    last_active_height: int
+    state_root: str  # hex-encoded
+    lineage: List[str]  # parent sigil IDs
+    metadata: str
+
+
+@dataclass(frozen=True)
+class Bond:
+    """A bond between two Sigils."""
+    bond_id: str
+    sigil_a: str
+    sigil_b: str
+    creation_height: int
+    terms_hash: str
+    scope: str
+
+
+@dataclass(frozen=True)
+class SigilParams:
+    """Sigil module parameters."""
+    dormant_threshold: int
+    dissolve_threshold: int
+    max_bonds_per_sigil: int
+    max_lineage_depth: int

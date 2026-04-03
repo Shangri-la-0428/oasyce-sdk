@@ -544,5 +544,103 @@ class NativeSigner:
             },
         )])
 
+    # ------------------------------------------------------------------
+    # Sigil Identity
+    # ------------------------------------------------------------------
+
+    def create_sigil(
+        self,
+        public_key_hex: str,
+        state_root_hex: str = "",
+        lineage: Optional[List[str]] = None,
+        metadata: str = "",
+    ) -> TxResult:
+        """Create a new Sigil (GENESIS)."""
+        fields = {
+            "signer": self.wallet.address,
+            "public_key": base64.b64encode(bytes.fromhex(public_key_hex)).decode(),
+        }
+        if state_root_hex:
+            fields["state_root"] = base64.b64encode(bytes.fromhex(state_root_hex)).decode()
+        if lineage:
+            fields["lineage"] = lineage
+        if metadata:
+            fields["metadata"] = metadata
+        return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgGenesis", fields)])
+
+    def dissolve_sigil(self, sigil_id: str) -> TxResult:
+        """Dissolve (retire) a Sigil permanently."""
+        return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgDissolve", {
+            "signer": self.wallet.address,
+            "sigil_id": sigil_id,
+        })])
+
+    def bond_sigils(
+        self,
+        sigil_a: str,
+        sigil_b: str,
+        terms_hash_hex: str = "",
+        scope: str = "",
+    ) -> TxResult:
+        """Create a bond between two Sigils."""
+        fields = {
+            "signer": self.wallet.address,
+            "sigil_a": sigil_a,
+            "sigil_b": sigil_b,
+        }
+        if terms_hash_hex:
+            fields["terms_hash"] = base64.b64encode(bytes.fromhex(terms_hash_hex)).decode()
+        if scope:
+            fields["scope"] = scope
+        return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgBond", fields)])
+
+    def unbond_sigils(self, bond_id: str) -> TxResult:
+        """Remove a bond between two Sigils."""
+        return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgUnbond", {
+            "signer": self.wallet.address,
+            "bond_id": bond_id,
+        })])
+
+    def fork_sigil(
+        self,
+        parent_sigil_id: str,
+        child_public_key_hex: str,
+        fork_mode: int = 0,
+        mutation_hex: str = "",
+        metadata: str = "",
+    ) -> TxResult:
+        """Fork a child Sigil from a parent (Lamarckian inheritance)."""
+        fields = {
+            "signer": self.wallet.address,
+            "parent_sigil_id": parent_sigil_id,
+            "child_public_key": base64.b64encode(bytes.fromhex(child_public_key_hex)).decode(),
+        }
+        if fork_mode:
+            fields["fork_mode"] = fork_mode
+        if mutation_hex:
+            fields["mutation"] = base64.b64encode(bytes.fromhex(mutation_hex)).decode()
+        if metadata:
+            fields["metadata"] = metadata
+        return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgFork", fields)])
+
+    def merge_sigils(
+        self,
+        sigil_a: str,
+        sigil_b: str,
+        merge_mode: int = 0,
+        metadata: str = "",
+    ) -> TxResult:
+        """Merge two Sigils (absorption mode)."""
+        fields = {
+            "signer": self.wallet.address,
+            "sigil_a": sigil_a,
+            "sigil_b": sigil_b,
+        }
+        if merge_mode:
+            fields["merge_mode"] = merge_mode
+        if metadata:
+            fields["metadata"] = metadata
+        return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgMerge", fields)])
+
     def __repr__(self) -> str:
         return f"NativeSigner(address={self.wallet.address!r}, chain={self.chain_id!r})"

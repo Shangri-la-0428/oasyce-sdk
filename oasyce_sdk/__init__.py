@@ -18,12 +18,14 @@ from .errors import (
     TimeoutError,
     ValidationError,
 )
+from .sigil import SigilManager, derive_sigil_id
 from .types import (
     AccessLevel,
     Account,
     AnchorRecord,
     Balance,
     Block,
+    Bond,
     BondingCurve,
     Capability,
     DataAsset,
@@ -39,6 +41,8 @@ from .types import (
     Registration,
     Reputation,
     ShareHolder,
+    Sigil,
+    SigilParams,
     Task,
     TxResult,
 )
@@ -47,6 +51,8 @@ __version__ = "0.10.0"
 
 __all__ = [
     "OasyceClient",
+    "SigilManager",
+    "derive_sigil_id",
     "__version__",
     # Errors
     "OasyceError",
@@ -62,6 +68,7 @@ __all__ = [
     "AnchorRecord",
     "Balance",
     "Block",
+    "Bond",
     "BondingCurve",
     "Capability",
     "DataAsset",
@@ -77,6 +84,8 @@ __all__ = [
     "Registration",
     "Reputation",
     "ShareHolder",
+    "Sigil",
+    "SigilParams",
     "Task",
     "TxResult",
 ]

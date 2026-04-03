@@ -429,6 +429,45 @@ MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
         ("bond", 4, F_COIN),
     ],
 
+    # --- Sigil ---
+    "/oasyce.sigil.v1.MsgGenesis": [
+        ("signer", 1, F_STRING),
+        ("public_key", 2, F_BYTES),
+        ("state_root", 3, F_BYTES),
+        ("lineage", 4, F_REPEATED_STRING),
+        ("metadata", 5, F_STRING),
+    ],
+    "/oasyce.sigil.v1.MsgDissolve": [
+        ("signer", 1, F_STRING),
+        ("sigil_id", 2, F_STRING),
+    ],
+    "/oasyce.sigil.v1.MsgBond": [
+        ("signer", 1, F_STRING),
+        ("sigil_a", 2, F_STRING),
+        ("sigil_b", 3, F_STRING),
+        ("terms_hash", 4, F_BYTES),
+        ("scope", 5, F_STRING),
+    ],
+    "/oasyce.sigil.v1.MsgUnbond": [
+        ("signer", 1, F_STRING),
+        ("bond_id", 2, F_STRING),
+    ],
+    "/oasyce.sigil.v1.MsgFork": [
+        ("signer", 1, F_STRING),
+        ("parent_sigil_id", 2, F_STRING),
+        ("child_public_key", 3, F_BYTES),
+        ("fork_mode", 4, F_UINT32),
+        ("mutation", 5, F_BYTES),
+        ("metadata", 6, F_STRING),
+    ],
+    "/oasyce.sigil.v1.MsgMerge": [
+        ("signer", 1, F_STRING),
+        ("sigil_a", 2, F_STRING),
+        ("sigil_b", 3, F_STRING),
+        ("merge_mode", 4, F_UINT32),
+        ("metadata", 5, F_STRING),
+    ],
+
     # --- Bank (Cosmos standard, for send) ---
     "/cosmos.bank.v1beta1.MsgSend": [
         ("from_address", 1, F_STRING),

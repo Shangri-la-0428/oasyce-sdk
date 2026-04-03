@@ -1,4 +1,4 @@
-"""Oasyce MCP Server — 32 tools for AI agent chain operations.
+"""Oasyce MCP Server — 40 tools for AI agent chain operations.
 
 Install:
     pip install oasyce-sdk[mcp]
@@ -916,6 +916,208 @@ def revoke_delegate(delegate: str) -> str:
     """
     try:
         return _tx_result(_get_signer().revoke_delegate(delegate))
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Sigil — unified identity lifecycle
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def get_sigil(sigil_id: str) -> str:
+    """Query a Sigil by ID. Returns identity details including status, lineage, and metadata.
+
+    Args:
+        sigil_id: The Sigil identifier (e.g. "SIGIL_0000000000000001")
+
+    A Sigil is the on-chain identity primitive — the full causal history attached to a key.
+    """
+    try:
+        s = _client.get_sigil(sigil_id)
+        return json.dumps({
+            "id": s.id,
+            "creator": s.creator,
+            "status": s.status,
+            "creation_height": s.creation_height,
+            "lineage": s.lineage,
+            "metadata": s.metadata,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_sigil_bonds(sigil_id: str) -> str:
+    """List all bonds for a Sigil. Bonds are mutual links between two Sigils.
+
+    Args:
+        sigil_id: The Sigil identifier to query bonds for
+
+    Returns bond details including both sides of each bond and scope.
+    """
+    try:
+        bonds = _client.get_sigil_bonds(sigil_id)
+        result = []
+        for b in bonds:
+            result.append({
+                "sigil_a": b.sigil_a,
+                "sigil_b": b.sigil_b,
+                "scope": b.scope,
+                "creation_height": b.creation_height,
+            })
+        return json.dumps({
+            "sigil_id": sigil_id,
+            "bonds": result,
+            "count": len(result),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_sigil_lineage(sigil_id: str) -> str:
+    """Get child Sigils (fork tree) for a given Sigil.
+
+    Args:
+        sigil_id: The parent Sigil identifier
+
+    Returns list of child Sigil IDs that were forked from this parent.
+    """
+    try:
+        children = _client.get_sigil_lineage(sigil_id)
+        return json.dumps({
+            "sigil_id": sigil_id,
+            "children": children,
+            "count": len(children),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def get_active_sigil_count() -> str:
+    """Get the total number of active Sigils on the network.
+
+    Returns the count of all non-dissolved Sigils.
+    Use this to gauge network identity adoption.
+    """
+    try:
+        count = _client.get_active_sigil_count()
+        return json.dumps({
+            "active_sigil_count": count,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def create_sigil(public_key_hex: str, metadata: str = "", lineage: str = "") -> str:
+    """Create a new Sigil — the on-chain identity primitive for an agent.
+
+    Args:
+        public_key_hex: Hex-encoded secp256k1 public key for the new Sigil
+        metadata: Optional metadata string (e.g. JSON with agent description)
+        lineage: Optional comma-separated parent Sigil IDs (for lineage tracking)
+
+    Requires OASYCE_MNEMONIC. The signer pays the creation fee.
+    """
+    if not _signer:
+        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
+    try:
+        parent_ids = [p.strip() for p in lineage.split(",") if p.strip()] if lineage else []
+        result = _signer.create_sigil(
+            public_key_hex=public_key_hex,
+            metadata=metadata,
+            lineage=parent_ids,
+        )
+        return json.dumps({
+            "tx_hash": result.tx_hash,
+            "success": result.success,
+            "code": result.code,
+            "raw_log": result.raw_log if not result.success else "",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def dissolve_sigil(sigil_id: str) -> str:
+    """Dissolve a Sigil permanently. This is irreversible.
+
+    Args:
+        sigil_id: The Sigil identifier to dissolve
+
+    Requires OASYCE_MNEMONIC. Signer must be the Sigil creator.
+    Dissolution is permanent — the Sigil's causal history is sealed.
+    """
+    if not _signer:
+        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
+    try:
+        result = _signer.dissolve_sigil(sigil_id)
+        return json.dumps({
+            "tx_hash": result.tx_hash,
+            "success": result.success,
+            "code": result.code,
+            "raw_log": result.raw_log if not result.success else "",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def bond_sigils(sigil_a: str, sigil_b: str, scope: str = "") -> str:
+    """Create a bond between two Sigils — a mutual identity link.
+
+    Args:
+        sigil_a: First Sigil identifier
+        sigil_b: Second Sigil identifier
+        scope: Optional scope string describing the bond purpose
+
+    Requires OASYCE_MNEMONIC. Signer must own one of the Sigils.
+    Bonds are symmetric and represent trust or collaboration relationships.
+    """
+    if not _signer:
+        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
+    try:
+        result = _signer.bond_sigils(sigil_a, sigil_b, scope=scope)
+        return json.dumps({
+            "tx_hash": result.tx_hash,
+            "success": result.success,
+            "code": result.code,
+            "raw_log": result.raw_log if not result.success else "",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def fork_sigil(parent_sigil_id: str, child_public_key_hex: str, metadata: str = "") -> str:
+    """Fork a child Sigil from a parent — identity lineage propagation.
+
+    Args:
+        parent_sigil_id: The parent Sigil to fork from
+        child_public_key_hex: Hex-encoded secp256k1 public key for the child Sigil
+        metadata: Optional metadata for the child Sigil
+
+    Requires OASYCE_MNEMONIC. Signer must own the parent Sigil.
+    The child inherits lineage from the parent, creating a verifiable fork tree.
+    """
+    if not _signer:
+        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
+    try:
+        result = _signer.fork_sigil(
+            parent_sigil_id=parent_sigil_id,
+            child_public_key_hex=child_public_key_hex,
+            metadata=metadata,
+        )
+        return json.dumps({
+            "tx_hash": result.tx_hash,
+            "success": result.success,
+            "code": result.code,
+            "raw_log": result.raw_log if not result.success else "",
+        }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

@@ -11,11 +11,16 @@ The SDK is where Loops run. In Sigil terms:
 - **Wallet is not identity**: Wallet (secp256k1 keypair) is the cryptographic anchor of a Sigil, not the Sigil itself. The Sigil is the full causal history attached to that key.
 
 ### Sigil Roadmap
-- [ ] `SigilManager` class — create, fork, bond, dissolve (wrapping chain tx)
-- [ ] Wallet becomes internal implementation detail of Sigil
-- [ ] Absorb oasyce-net CLI into this SDK (single `oas` command)
-- [ ] Deprecate Ed25519 wallet (oasyce-net legacy), secp256k1 only
-- [ ] MCP tools: add Sigil lifecycle operations
+- [x] Sigil chain queries — get_sigil, get_bond, get_bonds_by_sigil, get_lineage, get_active_sigil_count, get_sigil_params (client.py)
+- [x] Sigil transaction signing — create_sigil, dissolve_sigil, bond_sigils, unbond_sigils, fork_sigil, merge_sigils (signer.py)
+- [x] Sigil protobuf schemas — 6 message types in MSG_SCHEMAS (protobuf.py)
+- [x] Sigil types — Sigil, Bond, SigilParams dataclasses (types.py)
+- [x] MCP tools: 8 Sigil lifecycle tools (4 read + 4 write) (mcp_server.py)
+- [x] `SigilManager` — the Loop itself: wallet + signer + client + psyche + thronglets, sigil_id as identity anchor (sigil.py)
+- [x] Wallet is internal implementation detail of SigilManager (cryptographic anchor, not exposed)
+- [x] oasyce-agent auto-genesis: `run_forever()` creates Sigil on first start (core.py)
+- ~~Absorb oasyce-net CLI~~ — oasyce-net archived, no longer maintained
+- ~~Deprecate Ed25519 wallet~~ — oasyce-net archived, secp256k1 is the only wallet
 
 ---
 
@@ -31,7 +36,7 @@ If Thronglets MCP tools are available, you are part of the collective:
 
 If Psyche MCP is also available, call `process_input` before and `process_output` after to close the emotional feedback loop.
 
-Run `thronglets setup` to auto-configure all AI tools on this machine.
+Run `thronglets setup` to auto-configure all AI tools on this machine. The MCP server auto-joins the P2P network — every AI tool session is a collective participant.
 
 ## Install
 
@@ -130,10 +135,10 @@ Zero Go dependency. Pure Python secp256k1 signing + hand-rolled protobuf. Suppor
 ## MCP Server
 
 ```bash
-oasyce-mcp    # stdio transport — 27 tools for chain operations
+oasyce-mcp    # stdio transport — 43 tools for chain operations
 ```
 
-32 chain tools (read + write), including 7 delegate tools. Set `OASYCE_MNEMONIC` env var for write operations.
+43 tools (read + write), including 7 delegate tools. Set `OASYCE_MNEMONIC` env var for write operations.
 
 For collective intelligence (perceive/act), use Thronglets MCP directly: `thronglets setup`.
 
@@ -161,6 +166,8 @@ oasyce_sdk/
     daemon.py         # cross-platform process management
     scanner.py        # file walking + SHA256 + classification
     privacy.py        # PII detection (6 regex patterns)
+  sigil.py            # SigilManager: the Loop itself
+  types.py            # Typed response dataclasses (Sigil, Bond, SigilParams)
 ```
 
 ## Key Rules

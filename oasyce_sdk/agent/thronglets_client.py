@@ -184,6 +184,7 @@ class ThrongletsClient:
         input_size: int = 0,
         session_id: str = "",
         model_id: str = "",
+        sigil_id: str = "",
         space: str | None = None,
     ) -> dict[str, Any]:
         """Record an execution trace.
@@ -194,13 +195,15 @@ class ThrongletsClient:
         payload: dict[str, Any] = {
             "capability": capability,
             "outcome": outcome,
-            "context_text": context_text,
+            "context": context_text,
             "latency_ms": latency_ms,
             "input_size": input_size,
-            "model_id": model_id,
+            "model": model_id,
         }
         if session_id:
             payload["session_id"] = session_id
+        if sigil_id:
+            payload["sigil_id"] = sigil_id
         if space:
             payload["space"] = space
 
@@ -211,6 +214,46 @@ class ThrongletsClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def presence_ping(
+        self,
+        sigil_id: str,
+        *,
+        space: str | None = None,
+        capability: str = "",
+    ) -> dict[str, Any]:
+        """Announce presence in a space. TTL ~30 min."""
+        payload: dict[str, Any] = {"sigil_id": sigil_id}
+        if space:
+            payload["space"] = space
+        if capability:
+            payload["capability"] = capability
+        resp = self._session.post(
+            f"{self._base_url}/v1/presence",
+            json=payload,
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def presence_feed(
+        self,
+        hours: int = 1,
+        space: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Get active sessions in a space. Returns list of presence records."""
+        params: dict[str, Any] = {"hours": hours, "limit": limit}
+        if space:
+            params["space"] = space
+        resp = self._session.get(
+            f"{self._base_url}/v1/presence/feed",
+            params=params,
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("sessions", [])
 
     def signal_post(
         self,

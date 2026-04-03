@@ -30,6 +30,7 @@ from .types import (
     AnchorRecord,
     Balance,
     Block,
+    Bond,
     BondingCurve,
     Capability,
     DataAsset,
@@ -47,6 +48,8 @@ from .types import (
     Registration,
     Reputation,
     ShareHolder,
+    Sigil,
+    SigilParams,
     SpendWindow,
     Task,
     TxResult,
@@ -92,6 +95,15 @@ _REG_STATUS = {
     "REGISTRATION_STATUS_ACTIVE": "ACTIVE",
     "REGISTRATION_STATUS_REPAID": "REPAID",
     "REGISTRATION_STATUS_DEFAULTED": "DEFAULTED",
+}
+
+_SIGIL_STATUS = {
+    0: "ACTIVE", "0": "ACTIVE",
+    1: "DORMANT", "1": "DORMANT",
+    2: "DISSOLVED", "2": "DISSOLVED",
+    "SIGIL_STATUS_ACTIVE": "ACTIVE",
+    "SIGIL_STATUS_DORMANT": "DORMANT",
+    "SIGIL_STATUS_DISSOLVED": "DISSOLVED",
 }
 
 _INVOCATION_STATUS = {
@@ -1413,6 +1425,73 @@ class OasyceClient:
         """Query which principal a delegate belongs to (reverse lookup)."""
         data = self._get(f"/oasyce/delegate/v1/principal/{delegate}")
         return data.get("principal", "")
+
+    # ------------------------------------------------------------------
+    # Sigil Identity
+    # ------------------------------------------------------------------
+
+    def get_sigil(self, sigil_id: str) -> Sigil:
+        """Query a Sigil by ID."""
+        data = self._get(f"/oasyce/sigil/v1/sigil/{sigil_id}")
+        self._check_not_found(data, "Sigil", sigil_id)
+        s = data.get("sigil", data)
+        return self._parse_sigil(s)
+
+    def _parse_sigil(self, s: dict) -> Sigil:
+        return Sigil(
+            sigil_id=s.get("sigil_id", s.get("sigilId", "")),
+            creator=s.get("creator", ""),
+            public_key=s.get("public_key", s.get("publicKey", "")),
+            status=_SIGIL_STATUS.get(s.get("status", 0), "ACTIVE"),
+            creation_height=int(s.get("creation_height", s.get("creationHeight", 0))),
+            last_active_height=int(s.get("last_active_height", s.get("lastActiveHeight", 0))),
+            state_root=s.get("state_root", s.get("stateRoot", "")),
+            lineage=s.get("lineage", []),
+            metadata=s.get("metadata", ""),
+        )
+
+    def get_bond(self, bond_id: str) -> Bond:
+        """Query a Bond by ID."""
+        data = self._get(f"/oasyce/sigil/v1/bond/{bond_id}")
+        self._check_not_found(data, "Bond", bond_id)
+        b = data.get("bond", data)
+        return self._parse_bond(b)
+
+    def _parse_bond(self, b: dict) -> Bond:
+        return Bond(
+            bond_id=b.get("bond_id", b.get("bondId", "")),
+            sigil_a=b.get("sigil_a", b.get("sigilA", "")),
+            sigil_b=b.get("sigil_b", b.get("sigilB", "")),
+            creation_height=int(b.get("creation_height", b.get("creationHeight", 0))),
+            terms_hash=b.get("terms_hash", b.get("termsHash", "")),
+            scope=b.get("scope", ""),
+        )
+
+    def get_bonds_by_sigil(self, sigil_id: str) -> List[Bond]:
+        """List all bonds for a Sigil."""
+        data = self._get(f"/oasyce/sigil/v1/bonds_by_sigil/{sigil_id}")
+        return [self._parse_bond(b) for b in data.get("bonds", [])]
+
+    def get_lineage(self, sigil_id: str) -> List[str]:
+        """Get child Sigil IDs for a parent Sigil."""
+        data = self._get(f"/oasyce/sigil/v1/lineage/{sigil_id}")
+        return data.get("children", [])
+
+    def get_active_sigil_count(self) -> int:
+        """Get the total number of active Sigils."""
+        data = self._get("/oasyce/sigil/v1/active_count")
+        return int(data.get("count", "0"))
+
+    def get_sigil_params(self) -> SigilParams:
+        """Query Sigil module parameters."""
+        data = self._get("/oasyce/sigil/v1/params")
+        p = data.get("params", data)
+        return SigilParams(
+            dormant_threshold=int(p.get("dormant_threshold", p.get("dormantThreshold", 0))),
+            dissolve_threshold=int(p.get("dissolve_threshold", p.get("dissolveThreshold", 0))),
+            max_bonds_per_sigil=int(p.get("max_bonds_per_sigil", p.get("maxBondsPerSigil", 0))),
+            max_lineage_depth=int(p.get("max_lineage_depth", p.get("maxLineageDepth", 0))),
+        )
 
     # ------------------------------------------------------------------
     # Utility

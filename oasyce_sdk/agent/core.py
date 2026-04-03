@@ -351,6 +351,24 @@ def run_once(wallet, client, signer, conn, config) -> int:
     return registered
 
 
+def _ensure_sigil(loop, conn):
+    """Ensure this agent has a Sigil on-chain. Idempotent."""
+    if _get_state(conn, "sigil_genesis") == "true":
+        return
+
+    if loop.on_chain() is not None:
+        _set_state(conn, "sigil_genesis", "true")
+        logger.info("Sigil already on-chain: %s", loop.sigil_id)
+        return
+
+    try:
+        loop.genesis(metadata="oasyce-agent auto-genesis")
+        _set_state(conn, "sigil_genesis", "true")
+        logger.info("Sigil created: %s", loop.sigil_id)
+    except Exception as e:
+        logger.warning("Sigil genesis failed (will retry): %s", e)
+
+
 def run_forever():
     """Main daemon entry point. Runs until killed."""
     logging.basicConfig(
@@ -371,15 +389,18 @@ def run_forever():
     wallet, is_new = _ensure_wallet()
     logger.info("Address: %s", wallet.address)
 
-    # Setup client + signer
-    from oasyce_sdk.client import OasyceClient
-    from oasyce_sdk.crypto.signer import NativeSigner
+    # Setup SigilManager — the Loop itself
+    from oasyce_sdk.sigil import SigilManager
 
     node_url = config.get("node_url", DEFAULT_NODE)
     chain_id = config.get("chain_id", DEFAULT_CHAIN_ID)
 
-    client = OasyceClient(node_url)
-    signer = NativeSigner(wallet, client, chain_id=chain_id)
+    loop = SigilManager(wallet=wallet, chain_url=node_url, chain_id=chain_id)
+    logger.info("Sigil ID: %s", loop.sigil_id)
+
+    # Expose client/signer for scan+register (still needs raw chain ops)
+    client = loop.client
+    signer = loop.signer
 
     # Ensure on-chain registration (PoW + airdrop)
     try:
@@ -387,12 +408,8 @@ def run_forever():
     except Exception as e:
         logger.warning("Could not register on chain (will retry): %s", e)
 
-    # Join the collective
-    from .runtime import AgentRuntime
-    rt = AgentRuntime(
-        agent_id=wallet.address[:12],
-        model_id="oasyce-agent",
-    )
+    # Ensure Sigil exists on-chain (after registration, so we have gas)
+    _ensure_sigil(loop, conn)
 
     interval = config.get("interval_seconds", DEFAULT_INTERVAL)
     logger.info("Scan interval: %ds, node: %s", interval, node_url)
@@ -402,13 +419,20 @@ def run_forever():
         cycle += 1
         logger.info("--- Cycle %d ---", cycle)
 
+        # Announce presence + discover peers
+        loop.ping(capability="data-asset-management")
+        if cycle % 10 == 1:  # attempt bond every 10 cycles
+            new_bonds = loop.auto_bond()
+            if new_bonds:
+                logger.info("New bonds: %s", new_bonds)
+
         scan_paths = config.get("scan_paths", scanner.DEFAULT_SCAN_PATHS)
-        rt.perceive(f"cycle {cycle}: scanning {len(scan_paths)} directories for data assets")
+        loop.perceive(f"cycle {cycle}: scanning {len(scan_paths)} directories for data assets")
 
         try:
             registered = run_once(wallet, client, signer, conn, config)
             trades = discover_and_trade(client, signer, conn, config)
-            rt.act(
+            loop.act(
                 f"cycle {cycle}: registered {registered} assets, traded {trades} capabilities",
                 "succeeded" if registered + trades > 0 else "partial",
                 f"data asset scanning cycle {cycle}",
@@ -418,8 +442,8 @@ def run_forever():
             raise
         except Exception as e:
             logger.error("Cycle error: %s", e)
-            rt.act(f"cycle {cycle} failed: {e}", "failed",
-                   f"data asset scanning cycle {cycle}", capability="data-asset-management")
+            loop.act(f"cycle {cycle} failed: {e}", "failed",
+                     f"data asset scanning cycle {cycle}", capability="data-asset-management")
 
         logger.info("Sleeping %ds until next cycle...", interval)
         try:
@@ -428,6 +452,6 @@ def run_forever():
             logger.info("Interrupted, shutting down")
             break
 
-    rt.close()
+    loop.close()
     conn.close()
     logger.info("=== Oasyce Agent stopped ===")
