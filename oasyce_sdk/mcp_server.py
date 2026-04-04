@@ -23,7 +23,7 @@ Configure in Claude Desktop / Cursor / Windsurf:
 
 Write tools use the local device binding: ~/.oasyce/identity.v1.json + ~/.oasyce/wallet.json.
 OASYCE_MNEMONIC is an optional explicit override for stateless or server flows.
-Read tools work without either source. Use create_wallet or oasyce-agent start to create one.
+Read tools work without either source. Use create_wallet or oasyce start to create one.
 """
 
 from __future__ import annotations

@@ -253,7 +253,8 @@ def cmd_start(args):
         print(f"\n  Config:  {config_path}")
         print(f"  State:   {daemon.OASYCE_DIR}")
         print(f"  Logs:    {daemon.LOG_FILE}")
-        print(f"\n  oasyce-agent status   # check progress")
+        print(f"\n  oasyce status         # unified local stack status")
+        print(f"  oasyce-agent status   # data-agent focused status")
         print(f"  oasyce-agent stop     # stop agent")
     sys.exit(0 if ok else 1)
 
@@ -428,7 +429,7 @@ def cmd_join(args):
     IdentityResolver.ensure_local_binding(w)
     print(f"Recovered: {w.address}")
     print("This device now shares the same root account.")
-    print(f"\n  oasyce-agent start   # begin scanning on this device")
+    print(f"\n  oasyce start   # connect this device and begin scanning")
 
 
 def cmd_stats(args):
@@ -444,7 +445,7 @@ def cmd_stats(args):
 def _print_db_summary(verbose: bool = False):
     db_path = os.path.join(daemon.OASYCE_DIR, "agent.db")
     if not os.path.exists(db_path):
-        print("No agent data yet. Run: oasyce-agent start")
+        print("No agent data yet. Run: oasyce start")
         return
 
     import sqlite3
@@ -575,7 +576,7 @@ def main():
         _print_banner()
         _print_top_level_help()
         print("\nQuick start:")
-        print("  oasyce-agent start              # first run asks: new or recover")
+        print("  oasyce start                    # first run asks: new or recover")
         print("  oasyce-agent scan ~/Documents    # one-shot scan")
         sys.exit(1)
 

@@ -4,6 +4,25 @@
 >
 > Full API documentation for oasyce-sdk. For a quick start, see [README](../README.md).
 
+## Local Front Door / 本机统一前门
+
+如果你要在一台新电脑上直接把本地栈拉起，默认路径不是手动拼命令，而是：
+
+```bash
+pip install oasyce-sdk
+oasyce start
+```
+
+多设备路径：
+
+```bash
+oasyce share
+oasyce join ~/.oasyce/oasyce-connection.json
+oasyce status
+```
+
+下面的内容是 SDK / API 参考，不是正常用户的第一入口。
+
 ---
 
 ## 构造函数 / Constructor

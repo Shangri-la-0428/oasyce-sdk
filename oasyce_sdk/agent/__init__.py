@@ -1,7 +1,7 @@
 """Oasyce Agent — autonomous data asset registration daemon + agent runtime.
 
     pip install oasyce-sdk
-    oasyce-agent start
+    oasyce start
 
 Agent Runtime (the feedback loop)::
 

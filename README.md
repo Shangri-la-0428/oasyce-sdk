@@ -260,7 +260,7 @@ Psyche / Thronglets 不可用时优雅降级。`oasyce-agent` 守护进程每次
 **MCP-native AI 工具**（Claude Code / Cursor / Codex）直接使用 Thronglets MCP 的 `substrate_query` / `trace_record`，无需 AgentRuntime。一键配置：
 
 ```bash
-thronglets setup    # 自动检测所有已安装的 AI 工具，写入 MCP 配置
+thronglets bootstrap    # 自动检测本机 AI 工具并写入适配层配置
 ```
 
 ---
@@ -307,7 +307,7 @@ oasyce-agent stats                 # 资产统计
 }
 ```
 
-写工具默认复用本机 binding：`~/.oasyce/identity.v1.json` + `~/.oasyce/wallet.json`。如果你先用了 `Thronglets`，SDK 在第一次本地绑定时会可选吸收 `~/.thronglets/identity.v1.json` 里的 `owner_account` 作为 account hint。`OASYCE_MNEMONIC` 只是无状态 / 服务器场景下的显式 override。集体智能（perceive/act）用 Thronglets MCP：`thronglets setup`。
+写工具默认复用本机 binding：`~/.oasyce/identity.v1.json` + `~/.oasyce/wallet.json`。如果你先用了 `Thronglets`，SDK 在第一次本地绑定时会可选吸收 `~/.thronglets/identity.v1.json` 里的 `owner_account` 作为 account hint。`OASYCE_MNEMONIC` 只是无状态 / 服务器场景下的显式 override。集体智能（perceive/act）用 Thronglets MCP；Thronglets 的默认接入面是 `thronglets bootstrap`，也可以直接走 `oasyce start`。
 
 ---
 

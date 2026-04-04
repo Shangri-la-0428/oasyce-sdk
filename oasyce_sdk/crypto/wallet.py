@@ -235,7 +235,7 @@ class Wallet:
             return WalletBinding(wallet=file_wallet, source="file", path=wallet_path)
 
         raise FileNotFoundError(
-            "No identity found. Run 'oasyce-agent start' to create one."
+            "No identity found. Run 'oasyce start' to create one."
         )
 
     @classmethod
