@@ -8,6 +8,8 @@ Usage::
     caps = client.list_capabilities(tag="llm")
 """
 
+import importlib
+
 from .client import OasyceClient
 from .errors import (
     ChainError,
@@ -51,7 +53,7 @@ __version__ = "0.10.0"
 
 def __getattr__(name: str):
     if name == "agent":
-        from . import agent as agent_module
+        agent_module = importlib.import_module(".agent", __name__)
 
         globals()["agent"] = agent_module
         return agent_module
