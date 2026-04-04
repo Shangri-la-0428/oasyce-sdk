@@ -152,19 +152,35 @@ class AgentRuntime:
 
     def status(self) -> dict[str, Any]:
         """Check connectivity of all subsystems."""
-        identity = self.identity
-        return {
+        status = {
             "agent_id": self.agent_id,
             "session_id": self.session_id,
             "chain": self.chain.health(),
             "psyche": self.psyche.is_available(),
             "thronglets": self.thronglets.is_available(),
-            "signer_address": identity.address,
-            "account": identity.account,
-            "delegate": identity.delegate,
-            "wallet": identity.address,  # compatibility alias; signer_address is canonical
-            "identity": identity.to_dict(),
+            "signer_address": None,
+            "account": None,
+            "delegate": None,
+            "wallet": None,  # compatibility alias; signer_address is canonical
+            "identity": None,
+            "identity_error": None,
         }
+        try:
+            identity = self.identity
+        except (FileNotFoundError, RuntimeError) as exc:
+            status["identity_error"] = str(exc)
+            return status
+
+        status.update(
+            {
+                "signer_address": identity.address,
+                "account": identity.account,
+                "delegate": identity.delegate,
+                "wallet": identity.address,
+                "identity": identity.to_dict(),
+            }
+        )
+        return status
 
     # ── The loop ─────────────────────────────────────────────────
 

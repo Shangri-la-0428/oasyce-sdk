@@ -7,8 +7,8 @@ from oasyce_sdk.crypto.signer import NativeSigner, TxResult
 
 
 def test_all_signer_messages_have_protobuf_support():
-    signer_source = Path(
-        "/Users/wutongcheng/Desktop/oasyce-sdk/oasyce_sdk/crypto/signer.py"
+    signer_source = (
+        Path(__file__).resolve().parents[1] / "oasyce_sdk" / "crypto" / "signer.py"
     ).read_text()
     type_urls = {
         token

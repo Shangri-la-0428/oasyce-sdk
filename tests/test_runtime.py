@@ -271,11 +271,31 @@ class TestAgentRuntime:
         r.close()
 
     def test_status(self, mock_thronglets, mock_psyche):
-        s = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets).status()
+        wallet = Wallet.create()
+        runtime = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)
+        runtime.set_wallet(wallet)
+        s = runtime.status()
         assert s["psyche"] is True and s["thronglets"] is True
-        assert s["signer_address"].startswith("oasyce1")
+        assert s["signer_address"] == wallet.address
         assert s["delegate"] == s["signer_address"]
         assert s["wallet"] == s["signer_address"]
+        assert s["identity_error"] is None
+        runtime.close()
+
+    def test_status_without_identity_is_graceful(self, mock_thronglets, mock_psyche):
+        runtime = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)
+        with patch(
+            "oasyce_sdk.agent.runtime.IdentityResolver.resolve",
+            side_effect=FileNotFoundError("No identity found"),
+        ):
+            s = runtime.status()
+        assert s["psyche"] is True and s["thronglets"] is True
+        assert s["signer_address"] is None
+        assert s["delegate"] is None
+        assert s["wallet"] is None
+        assert s["identity"] is None
+        assert s["identity_error"] == "No identity found"
+        runtime.close()
 
     def test_wallet_uses_device_resolution(self, mock_thronglets, mock_psyche):
         r = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)
