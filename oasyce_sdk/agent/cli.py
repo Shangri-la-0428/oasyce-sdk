@@ -86,7 +86,52 @@ _TRADE_PROFILES = {
 }
 
 
-def _setup_identity():
+def _wallet_path() -> str:
+    return os.path.join(daemon.OASYCE_DIR, "wallet.json")
+
+
+def _write_wallet_file(wallet) -> None:
+    os.makedirs(daemon.OASYCE_DIR, exist_ok=True)
+    with open(_wallet_path(), "w") as f:
+        json.dump({"mnemonic": wallet.mnemonic, "address": wallet.address}, f, indent=2)
+
+    if sys.platform != "win32":
+        import stat
+
+        os.chmod(_wallet_path(), stat.S_IRUSR | stat.S_IWUSR)
+
+
+def _default_agent_config() -> dict:
+    from . import scanner
+
+    return {
+        "node_url": "http://47.93.32.88:1317",
+        "chain_id": "oasyce-testnet-1",
+        "interval_seconds": 3600,
+        "max_per_cycle": 10,
+        "scan_paths": list(scanner.DEFAULT_SCAN_PATHS),
+        "max_file_size_mb": 50,
+        "auto_trade": False,
+        "trade_tags": [],
+        "trade_max_spend_uoas": 1_000_000,
+    }
+
+
+def _write_agent_config(config_path: str, config: dict) -> str:
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    return config_path
+
+
+def _ensure_default_agent_config(config_path: str | None = None) -> str:
+    config_path = config_path or os.path.join(daemon.OASYCE_DIR, "agent.json")
+    if not os.path.exists(config_path):
+        _write_agent_config(config_path, _default_agent_config())
+    return config_path
+
+
+def _setup_identity(*, prompt_if_missing: bool = True):
     """Ensure wallet exists. If not, ask once: new or recover.
 
     Returns the Wallet and whether it was newly created.
@@ -94,7 +139,7 @@ def _setup_identity():
     from oasyce_sdk.crypto.wallet import Wallet
     from oasyce_sdk.identity import IdentityResolver
 
-    wallet_path = os.path.join(daemon.OASYCE_DIR, "wallet.json")
+    wallet_path = _wallet_path()
 
     # Already have identity — zero questions
     if os.path.exists(wallet_path):
@@ -102,6 +147,13 @@ def _setup_identity():
         IdentityResolver.ensure_local_binding(identity.wallet)
         print(f"  Identity: {identity.address}")
         return identity.wallet, False
+
+    if not prompt_if_missing:
+        w = Wallet.create()
+        _write_wallet_file(w)
+        IdentityResolver.ensure_local_binding(w)
+        print(f"  Identity: created local device signer {w.address}")
+        return w, True
 
     # No identity — one question
     print("  Identity:")
@@ -119,14 +171,7 @@ def _setup_identity():
     else:
         w = Wallet.create()
 
-    os.makedirs(daemon.OASYCE_DIR, exist_ok=True)
-    with open(wallet_path, "w") as f:
-        json.dump({"mnemonic": w.mnemonic, "address": w.address}, f, indent=2)
-
-    if sys.platform != "win32":
-        import stat
-        os.chmod(wallet_path, stat.S_IRUSR | stat.S_IWUSR)
-
+    _write_wallet_file(w)
     IdentityResolver.ensure_local_binding(w)
     label = "Recovered" if choice == "2" else "Created"
     print(f"     {label}: {w.address}")
@@ -177,21 +222,13 @@ def _first_run_setup(config_path: str):
     print("  Privacy: only safe files register. Always on. Non-negotiable.")
 
     # --- Save config ---
-    config = {
-        "node_url": "http://47.93.32.88:1317",
-        "chain_id": "oasyce-testnet-1",
-        "interval_seconds": 3600,
-        "max_per_cycle": 10,
-        "scan_paths": scan_paths,
-        "max_file_size_mb": 50,
-        "auto_trade": profile["auto_trade"],
-        "trade_tags": profile["trade_tags"],
-        "trade_max_spend_uoas": profile["trade_max_spend_uoas"],
-    }
+    config = _default_agent_config()
+    config["scan_paths"] = scan_paths
+    config["auto_trade"] = profile["auto_trade"]
+    config["trade_tags"] = profile["trade_tags"]
+    config["trade_max_spend_uoas"] = profile["trade_max_spend_uoas"]
 
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    _write_agent_config(config_path, config)
 
     print(f"\n  Ready.")
     print(f"  Scanning: {len(scan_paths)} directories")

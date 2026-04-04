@@ -36,6 +36,37 @@ Runtime / body for the Oasyce stack. It resolves local identity binding and conn
 
 ---
 
+## 统一前门 / Unified Front Door
+
+如果你想在一台新电脑上把整套本地体验直接拉起，默认入口现在是：
+
+```bash
+pip install oasyce-sdk
+oasyce start
+```
+
+它会尽量自动完成：
+
+1. 复用或创建本机 signer / binding
+2. 生成默认 agent 配置
+3. 接上 Thronglets bootstrap
+4. 配置 Psyche MCP surface
+5. 启动本地 `oasyce-agent`
+
+正常情况下，只有**没有身份**时才会问一次 `New / Recover`。
+
+多设备路径也压成了同一组命令：
+
+```bash
+oasyce share
+oasyce join ~/.oasyce/oasyce-connection.json
+oasyce status
+```
+
+这只是统一前门，不改变各产品的独立性。你仍然可以单独使用 `Psyche`、`Thronglets` 或 `Chain`。
+
+---
+
 ## AI Agent 快速上手 / AI Agent Quick Start
 
 **你是 AI agent？** 按顺序执行以下代码就能操作 Oasyce 链。无需配置文件，无需人类帮忙。
@@ -241,8 +272,9 @@ thronglets setup    # 自动检测所有已安装的 AI 工具，写入 MCP 配�
 One command to auto-manage your data assets. Background daemon: scan, detect PII, hash, register on-chain.
 
 ```bash
-oasyce-agent start                 # 首次: New/Recover → 绑定本机身份；之后: 直接启动
-oasyce-agent status                # 查看运行状态 + 已注册资产数
+oasyce start                       # 默认前门：接好本地栈并启动 agent
+oasyce status                      # 统一查看本机 stack 状态
+oasyce-agent status                # 仅查看 data-agent 运行状态 + 已注册资产数
 oasyce-agent stop                  # 停止
 oasyce-agent scan ~/Documents      # 手动扫描（分类 + 隐私报告）
 oasyce-agent privacy ~/secret.csv  # 单文件 PII 检查

@@ -40,6 +40,7 @@ langchain = ["langchain-core>=0.2"]
 all = ["mcp>=1.0", "langchain-core>=0.2"]
 
 [project.scripts]
+oasyce = "oasyce_sdk.cli:main"
 oasyce-mcp = "oasyce_sdk.mcp_server:main"
 oasyce-agent = "oasyce_sdk.agent.cli:main"
 
