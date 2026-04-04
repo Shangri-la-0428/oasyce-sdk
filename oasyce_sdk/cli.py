@@ -46,7 +46,22 @@ def _dev_psyche_cli_path() -> Path | None:
     return candidate if candidate.exists() else None
 
 
+def _managed_thronglets_path() -> Path:
+    return _home_dir() / ".thronglets" / "bin" / "thronglets-managed"
+
+
+def _dev_thronglets_bin_path() -> Path | None:
+    candidate = _workspace_root() / "Thronglets" / "target" / "debug" / "thronglets"
+    return candidate if candidate.exists() else None
+
+
 def _resolve_thronglets_base_command() -> list[str]:
+    managed = _managed_thronglets_path()
+    if managed.exists() and os.access(managed, os.X_OK):
+        return [str(managed)]
+    local_dev = _dev_thronglets_bin_path()
+    if local_dev and os.access(local_dev, os.X_OK):
+        return [str(local_dev)]
     if shutil.which("thronglets"):
         return ["thronglets"]
     if shutil.which("npx"):

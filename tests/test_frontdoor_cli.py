@@ -155,6 +155,17 @@ def test_psyche_configured_targets_detect_codex_and_cursor(monkeypatch, tmp_path
     assert frontdoor._psyche_configured_targets() == ["Codex", "Cursor"]
 
 
+def test_resolve_thronglets_base_command_prefers_managed_launcher(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    launcher = tmp_path / ".thronglets" / "bin" / "thronglets-managed"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: "/usr/local/bin/thronglets" if name == "thronglets" else None)
+
+    assert frontdoor._resolve_thronglets_base_command() == [str(launcher)]
+
+
 def test_status_json_uses_collected_status(monkeypatch, capsys):
     payload = {"identity": {"address": "oasyce1demo"}, "agent": {"running": False}, "thronglets": {}, "psyche": {}, "paths": {}}
     monkeypatch.setattr(frontdoor, "_collect_status", lambda: payload)
