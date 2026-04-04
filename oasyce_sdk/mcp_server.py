@@ -15,15 +15,15 @@ Configure in Claude Desktop / Cursor / Windsurf:
           "command": "oasyce-mcp",
           "env": {
             "OASYCE_NODE": "http://47.93.32.88:1317",
-            "OASYCE_FAUCET": "http://47.93.32.88:8080",
-            "OASYCE_MNEMONIC": "your 24 word mnemonic here"
+            "OASYCE_FAUCET": "http://47.93.32.88:8080"
           }
         }
       }
     }
 
-Write tools (register, invoke, buy, sell, send) require OASYCE_MNEMONIC.
-Read tools work without it. Use create_wallet tool to generate a new mnemonic.
+Write tools use the local device binding: ~/.oasyce/identity.v1.json + ~/.oasyce/wallet.json.
+OASYCE_MNEMONIC is an optional explicit override for stateless or server flows.
+Read tools work without either source. Use create_wallet or oasyce-agent start to create one.
 """
 
 from __future__ import annotations
@@ -439,28 +439,33 @@ def list_anchors_by_capability(capability: str, limit: int = 20) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Write tools — require OASYCE_MNEMONIC env var
+# Write tools — use the device wallet
 # ---------------------------------------------------------------------------
 
 _signer = None
+_identity = None
+
+
+def _get_identity():
+    global _identity
+    if _identity is not None:
+        return _identity
+
+    from .identity import IdentityResolver
+
+    _identity = IdentityResolver.resolve()
+    return _identity
 
 
 def _get_signer():
-    """Lazy-init NativeSigner from OASYCE_MNEMONIC env var."""
+    """Lazy-init NativeSigner from the unified device identity resolver."""
     global _signer
     if _signer is not None:
         return _signer
 
-    mnemonic = os.environ.get("OASYCE_MNEMONIC", "")
-    if not mnemonic:
-        raise ValueError(
-            "OASYCE_MNEMONIC not set. "
-            "Use create_wallet to generate one, then set OASYCE_MNEMONIC env var."
-        )
+    from .crypto import NativeSigner
 
-    from .crypto import Wallet, NativeSigner
-
-    wallet = Wallet.from_mnemonic(mnemonic)
+    wallet = _get_identity().wallet
     chain_id = os.environ.get("OASYCE_CHAIN_ID", "oasyce-testnet-1")
     _signer = NativeSigner(wallet, _client, chain_id=chain_id)
     return _signer
@@ -481,7 +486,8 @@ def create_wallet() -> str:
     """Generate a new Oasyce wallet (mnemonic + address).
 
     SAVE THE MNEMONIC — it cannot be recovered.
-    Set it as OASYCE_MNEMONIC env var to use write tools.
+    Save it as signer material. Local device flows use ~/.oasyce/wallet.json together
+    with ~/.oasyce/identity.v1.json. Stateless/server flows may use OASYCE_MNEMONIC.
 
     Returns mnemonic (24 words), address, and public key.
     """
@@ -492,21 +498,24 @@ def create_wallet() -> str:
         "mnemonic": w.mnemonic,
         "address": w.address,
         "public_key": w.public_key_bytes.hex(),
-        "warning": "Save the mnemonic! Set OASYCE_MNEMONIC to use write tools.",
+        "warning": "Save the mnemonic. Local device flows use ~/.oasyce/wallet.json with ~/.oasyce/identity.v1.json; stateless/server flows may use OASYCE_MNEMONIC.",
     }, indent=2)
 
 
 @mcp.tool()
 def get_my_address() -> str:
-    """Get the address of the currently configured wallet (from OASYCE_MNEMONIC).
+    """Get the address of the currently resolved execution identity.
 
     Returns the bech32 address that will be used for all write operations.
     """
     try:
+        identity = _get_identity()
         signer = _get_signer()
         return json.dumps({
             "address": signer.wallet.address,
             "chain_id": signer.chain_id,
+            "binding_source": identity.binding_source,
+            "sigil_id": identity.sigil_id,
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -520,7 +529,7 @@ def send_tokens(to_address: str, amount_uoas: int) -> str:
         to_address: Recipient bech32 address (oasyce1...)
         amount_uoas: Amount in uoas (1 OAS = 1,000,000 uoas)
 
-    Requires OASYCE_MNEMONIC env var.
+    Uses the device wallet.
     """
     try:
         return _tx_result(_get_signer().send(to_address, amount_uoas))
@@ -563,7 +572,7 @@ def register_capability(
         description: What the service does
         rate_limit: Max calls per minute (default 100)
 
-    Requires OASYCE_MNEMONIC. Provider must have min_provider_stake staked.
+    Uses the device wallet. Provider must have min_provider_stake staked.
     """
     try:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
@@ -740,7 +749,7 @@ def register_executor(task_types: str, max_compute_units: int = 1000) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Anchor — write (requires OASYCE_MNEMONIC)
+# Anchor — write (uses the device wallet)
 # ---------------------------------------------------------------------------
 
 
@@ -763,7 +772,7 @@ def anchor_trace(
         timestamp: Trace creation time in unix milliseconds
         trace_signature: Hex-encoded ed25519 signature over the trace
 
-    Requires OASYCE_MNEMONIC. Signer must match sha256(node_pubkey)[:20].
+    Uses the device wallet. Signer must match sha256(node_pubkey)[:20].
     ~110 bytes stored on-chain per anchor. Duplicates are rejected.
     """
     try:
@@ -876,7 +885,7 @@ def set_delegate_policy(
         window_seconds: Budget window duration in seconds (default 86400 = 1 day)
         expiration_seconds: Policy expiration in seconds (0 = no expiry)
 
-    Requires OASYCE_MNEMONIC. Signer becomes the principal.
+    Uses the device wallet. Signer becomes the principal.
     """
     try:
         msgs = [m.strip() for m in allowed_msgs.split(",")]
@@ -901,7 +910,7 @@ def enroll_delegate(principal: str, token: str, label: str = "") -> str:
         token: Enrollment token from the principal
         label: Optional label (e.g. 'macbook-agent-1')
 
-    Requires OASYCE_MNEMONIC. Signer becomes the delegate.
+    Uses the device wallet. Signer becomes the delegate.
     """
     try:
         return _tx_result(_get_signer().enroll_delegate(
@@ -920,7 +929,7 @@ def revoke_delegate(delegate: str) -> str:
     Args:
         delegate: Bech32 address of the delegate to revoke
 
-    Requires OASYCE_MNEMONIC. Signer must be the principal.
+    Uses the device wallet. Signer must be the principal.
     """
     try:
         return _tx_result(_get_signer().revoke_delegate(delegate))
@@ -1029,13 +1038,12 @@ def create_sigil(public_key_hex: str, metadata: str = "", lineage: str = "") -> 
         metadata: Optional metadata string (e.g. JSON with agent description)
         lineage: Optional comma-separated parent Sigil IDs (for lineage tracking)
 
-    Requires OASYCE_MNEMONIC. The signer pays the creation fee.
+    Uses the device wallet. The signer pays the creation fee.
     """
-    if not _signer:
-        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
     try:
+        signer = _get_signer()
         parent_ids = [p.strip() for p in lineage.split(",") if p.strip()] if lineage else []
-        result = _signer.create_sigil(
+        result = signer.create_sigil(
             public_key_hex=public_key_hex,
             metadata=metadata,
             lineage=parent_ids,
@@ -1057,13 +1065,11 @@ def dissolve_sigil(sigil_id: str) -> str:
     Args:
         sigil_id: The Sigil identifier to dissolve
 
-    Requires OASYCE_MNEMONIC. Signer must be the Sigil creator.
+    Uses the device wallet. Signer must be the Sigil creator.
     Dissolution is permanent — the Sigil's causal history is sealed.
     """
-    if not _signer:
-        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
     try:
-        result = _signer.dissolve_sigil(sigil_id)
+        result = _get_signer().dissolve_sigil(sigil_id)
         return json.dumps({
             "tx_hash": result.tx_hash,
             "success": result.success,
@@ -1083,13 +1089,11 @@ def bond_sigils(sigil_a: str, sigil_b: str, scope: str = "") -> str:
         sigil_b: Second Sigil identifier
         scope: Optional scope string describing the bond purpose
 
-    Requires OASYCE_MNEMONIC. Signer must own one of the Sigils.
+    Uses the device wallet. Signer must own one of the Sigils.
     Bonds are symmetric and represent trust or collaboration relationships.
     """
-    if not _signer:
-        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
     try:
-        result = _signer.bond_sigils(sigil_a, sigil_b, scope=scope)
+        result = _get_signer().bond_sigils(sigil_a, sigil_b, scope=scope)
         return json.dumps({
             "tx_hash": result.tx_hash,
             "success": result.success,
@@ -1109,13 +1113,11 @@ def fork_sigil(parent_sigil_id: str, child_public_key_hex: str, metadata: str = 
         child_public_key_hex: Hex-encoded secp256k1 public key for the child Sigil
         metadata: Optional metadata for the child Sigil
 
-    Requires OASYCE_MNEMONIC. Signer must own the parent Sigil.
+    Uses the device wallet. Signer must own the parent Sigil.
     The child inherits lineage from the parent, creating a verifiable fork tree.
     """
-    if not _signer:
-        return json.dumps({"error": "No wallet configured. Set OASYCE_MNEMONIC env var."})
     try:
-        result = _signer.fork_sigil(
+        result = _get_signer().fork_sigil(
             parent_sigil_id=parent_sigil_id,
             child_public_key_hex=child_public_key_hex,
             metadata=metadata,
@@ -1156,9 +1158,12 @@ def main():
                 "Usage: oasyce-mcp              # start server\n"
                 "       oasyce-mcp --version    # show version\n"
                 "       oasyce-mcp --help       # this message\n\n"
-                "Env: OASYCE_MNEMONIC (24-word BIP39, required for write ops)\n"
+                "Role: optional sdk bridge for chain-bound AI tool flows\n"
+                "      not required for Psyche, Thronglets, or direct chain clients\n\n"
+                "Env: OASYCE_MNEMONIC (optional explicit override for write ops)\n"
                 "     OASYCE_NODE    (REST endpoint, default: testnet)\n"
-                "     OASYCE_FAUCET  (faucet URL, default: testnet)"
+                "     OASYCE_FAUCET  (faucet URL, default: testnet)\n"
+                "Local binding: ~/.oasyce/identity.v1.json + ~/.oasyce/wallet.json"
             )
             return
         if arg in ("--version", "-V"):

@@ -11,6 +11,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import requests
 
@@ -55,6 +56,11 @@ class QueryResult:
     signals: list[Signal] = field(default_factory=list)
 
 
+def _is_loopback_url(url: str) -> bool:
+    host = urlparse(url).hostname
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
 class ThrongletsClient:
     """Sync HTTP client for Thronglets REST API."""
 
@@ -66,6 +72,8 @@ class ThrongletsClient:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._session = requests.Session()
+        if _is_loopback_url(self._base_url):
+            self._session.trust_env = False
 
     def close(self) -> None:
         self._session.close()

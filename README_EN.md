@@ -1,8 +1,29 @@
 # oasyce-sdk
 
-Python SDK for the Oasyce L1 chain -- agent-native settlement infrastructure where AI agents own property, enforce contracts, and resolve disputes autonomously.
+Python runtime / body for the Oasyce stack. It resolves local identity binding, exposes signer-backed tools, and connects the same delegate execution context to Chain, Thronglets, and Psyche.
 
 [中文](README.md)
+
+## Stack Role
+
+- `Sigil`: continuity and lifecycle grammar, not a bloated runtime object
+- `oasyce-sdk`: the body and execution surface
+- `Oasyce Chain`: authorization truth, commitments, settlement, and public finality
+- `Thronglets`: shared environment, delegate continuity, trace / signal / presence
+- `Psyche`: subjective continuity and self-state
+
+The first principle for the SDK is simple: resolve one local execution identity, then project it cleanly into the rest of the stack.
+
+## Independent Adoption
+
+`oasyce-sdk` is not the mandatory front door for the whole stack.
+
+- If you only want `Psyche`, you do not need the SDK
+- If you only want `Thronglets`, you do not need the SDK
+- If you only want to consume `Oasyce Chain` directly through CLI / REST / gRPC, you do not need the SDK
+- The SDK enters the main path only when you want to bridge a local delegate runtime into chain-bound authorization and settlement flows
+
+The elegant progression is: standalone use first, optional binding second, optional public settlement last.
 
 ## Install
 
@@ -15,7 +36,7 @@ pip install oasyce-sdk[all]       # Everything
 
 ## Data Agent (v0.7.0)
 
-**One command, automatic data asset registration.** Background daemon scans local files → privacy check → SHA256 hash → on-chain registration. Works on macOS / Linux / Windows.
+**One command, automatic data asset registration.** The daemon first establishes local identity binding, then scans local files → privacy check → SHA256 hash → on-chain registration. Works on macOS / Linux / Windows.
 
 ```bash
 pip install oasyce-sdk
@@ -23,7 +44,7 @@ oasyce-agent start     # that's it.
 ```
 
 What it does automatically:
-1. Creates a wallet (BIP39 mnemonic saved to `~/.oasyce/wallet.json`)
+1. First run: asks once whether to create a new signer or recover an existing one, then stores signer material in `~/.oasyce/wallet.json` and semantic local binding in `~/.oasyce/identity.v1.json`
 2. Solves PoW puzzle, self-registers on chain for OAS airdrop
 3. Scans ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures
 4. **Privacy gate**: PII detection (email, phone, ID card, credit card, API key) — only `safe` files register
@@ -41,6 +62,8 @@ oasyce-agent stats                 # asset breakdown
 Config: `~/.oasyce/agent.json` (auto-generated, editable for scan paths, interval, etc).
 
 > DataVault (odv) is now fully absorbed into oasyce-sdk. No separate install needed.
+
+For code-first flows, `Wallet.create()` is the first-device path and `Wallet.auto()` is the standard reuse path for later runs or tool integrations.
 
 ## MCP Server
 

@@ -18,7 +18,6 @@ from .errors import (
     TimeoutError,
     ValidationError,
 )
-from .sigil import SigilManager, derive_sigil_id
 from .types import (
     AccessLevel,
     Account,
@@ -49,8 +48,26 @@ from .types import (
 
 __version__ = "0.10.0"
 
+
+def __getattr__(name: str):
+    if name in {"IdentityContext", "IdentityResolver"}:
+        from .identity import IdentityContext, IdentityResolver
+
+        globals()["IdentityContext"] = IdentityContext
+        globals()["IdentityResolver"] = IdentityResolver
+        return globals()[name]
+    if name in {"SigilManager", "derive_sigil_id"}:
+        from .sigil import SigilManager, derive_sigil_id
+
+        globals()["SigilManager"] = SigilManager
+        globals()["derive_sigil_id"] = derive_sigil_id
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 __all__ = [
     "OasyceClient",
+    "IdentityContext",
+    "IdentityResolver",
     "SigilManager",
     "derive_sigil_id",
     "__version__",

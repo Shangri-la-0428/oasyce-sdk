@@ -135,6 +135,7 @@ def _ensure_wallet():
     migrated to identity.json to avoid collisions.
     """
     from oasyce_sdk.crypto.wallet import Wallet
+    from oasyce_sdk.identity import IdentityResolver
 
     identity_path = os.path.join(OASYCE_DIR, "identity.json")
 
@@ -144,10 +145,12 @@ def _ensure_wallet():
             data = json.load(f)
         if "mnemonic" in data:
             w = Wallet.from_mnemonic(data["mnemonic"])
+            IdentityResolver.ensure_local_binding(w)
             logger.info("Loaded wallet: %s", w.address)
             return w, False
         elif "private_key" in data:
             w = Wallet.from_private_key(data["private_key"])
+            IdentityResolver.ensure_local_binding(w)
             logger.info("Loaded wallet: %s", w.address)
             return w, False
         elif "version" in data and "public_key" in data:
@@ -168,10 +171,12 @@ def _ensure_wallet():
         if "mnemonic" in data and not os.path.exists(WALLET_PATH):
             os.rename(agent_path, WALLET_PATH)
             w = Wallet.from_mnemonic(data["mnemonic"])
+            IdentityResolver.ensure_local_binding(w)
             logger.info("Migrated wallet.json.agent → wallet.json: %s", w.address)
             return w, False
 
-    # Create new secp256k1 chain wallet
+    # Fallback: auto-create if no interactive setup happened
+    # (e.g. programmatic usage or `oasyce-agent run` without `start`)
     w = Wallet.create()
     os.makedirs(OASYCE_DIR, exist_ok=True)
     with open(WALLET_PATH, "w") as f:
@@ -183,7 +188,8 @@ def _ensure_wallet():
     if sys.platform != "win32":
         os.chmod(WALLET_PATH, stat.S_IRUSR | stat.S_IWUSR)
 
-    logger.info("Created new wallet: %s (saved to %s)", w.address, WALLET_PATH)
+    IdentityResolver.ensure_local_binding(w)
+    logger.info("Auto-created wallet (no interactive setup): %s", w.address)
     return w, True
 
 

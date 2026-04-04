@@ -28,6 +28,7 @@ from typing import Any, List, Optional
 from .client import OasyceClient
 from .crypto.signer import NativeSigner
 from .crypto.wallet import Wallet
+from .identity import IdentityResolver
 from .agent.psyche_client import PsycheClient, SubjectivityKernel
 from .agent.thronglets_client import ThrongletsClient, Outcome
 from .agent.runtime import Perception, synthesize_stimulus, outcome_to_writeback
@@ -65,7 +66,8 @@ class SigilManager:
         thronglets_url: str = "http://127.0.0.1:7777",
         space: str | None = None,
     ):
-        self._wallet = wallet or Wallet.from_env("OASYCE_MNEMONIC")
+        self.identity = IdentityResolver.resolve(wallet=wallet)
+        self._wallet = self.identity.wallet
         self.client = OasyceClient(chain_url)
         self.signer = NativeSigner(self._wallet, self.client, chain_id=chain_id)
         self.psyche = PsycheClient(psyche_url)
@@ -77,12 +79,12 @@ class SigilManager:
     @property
     def sigil_id(self) -> str:
         """Deterministic Sigil ID from this wallet's public key."""
-        return derive_sigil_id(self._wallet.public_key_bytes)
+        return self.identity.sigil_id
 
     @property
     def address(self) -> str:
         """Cosmos bech32 address (the cryptographic anchor)."""
-        return self._wallet.address
+        return self.identity.address
 
     # ── Lifecycle ────────────────────────────────────────────────
 

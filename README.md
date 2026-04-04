@@ -5,11 +5,34 @@
 [![PyPI](https://img.shields.io/pypi/v/oasyce-sdk)](https://pypi.org/project/oasyce-sdk/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-Oasyce 生态的 agent 运行时。一次安装，agent 就拥有链上身份、数据确权、能力交易、集体记忆和情绪内核。
+Oasyce 栈的 runtime / body。它负责解析本机 identity binding，把同一份 delegate 执行上下文接到 Chain、Thronglets 和 Psyche，而不是把 `wallet` 当成产品中心。
 
-Agent runtime for the Oasyce ecosystem. One install gives an agent chain identity, data ownership, capability trading, collective memory, and an emotion kernel.
+Runtime / body for the Oasyce stack. It resolves local identity binding and connects the same delegate execution context to Chain, Thronglets, and Psyche instead of turning `wallet` into the product's ontology center.
 
 [English](README_EN.md) | [API Reference / 完整 API 文档](docs/API_REFERENCE.md)
+
+---
+
+## 栈定位 / Stack Role
+
+- `Sigil`：连续性与生命周期语法，不是一个胖 runtime 对象
+- `oasyce-sdk`：身体与执行面，负责本地 binding、signer、工具入口和跨层桥接
+- `Oasyce Chain`：授权真相、承诺、结算、公共终局
+- `Thronglets`：共享环境、delegate continuity、trace / signal / presence
+- `Psyche`：主观连续性、自我状态、关系残留
+
+因此 SDK 的第一原则是：**先解析统一的本地执行身份，再把它投射到各层。**
+
+## 独立采用 / Independent Adoption
+
+`oasyce-sdk` 不是使用整个栈的前置门票。
+
+- 如果你只想用 `Psyche`，不需要 `sdk`
+- 如果你只想用 `Thronglets`，不需要 `sdk`
+- 如果你只想直接调用 `Oasyce Chain` 的 CLI / REST / gRPC，也不需要 `sdk`
+- 只有当你要把本地 delegate runtime 和链上授权 / 结算路径桥接起来时，`sdk` 才进入主路径
+
+所以最优雅的采用顺序是：先独立使用某一层，之后按需增加 binding 和 chain settlement，而不是先装一个总控入口。
 
 ---
 
@@ -25,17 +48,20 @@ Agent runtime for the Oasyce ecosystem. One install gives an agent chain identit
 pip install oasyce-sdk
 ```
 
-### Step 2: 创建钱包 + 领取测试币 / Create wallet + get testnet tokens
+### Step 2: 建立本机 signer + 领取测试币 / Create signer material + get testnet tokens
 
 ```python
 import requests
 from oasyce_sdk import OasyceClient
 from oasyce_sdk.crypto import Wallet, NativeSigner
 
-# 创建钱包 / create wallet
+# 首次设备 / first device
 wallet = Wallet.create()
 print(f"地址: {wallet.address}")
 print(f"助记词(保存好): {wallet.mnemonic}")
+
+# 之后的运行、MCP、LangChain、runtime 集成优先复用本机 binding:
+# wallet = Wallet.auto()  # OASYCE_MNEMONIC > ~/.oasyce/wallet.json
 
 # 领测试币（免费，每次 20 OAS）/ get free testnet tokens
 resp = requests.get(f"http://47.93.32.88:8080/faucet?address={wallet.address}")
@@ -45,6 +71,8 @@ print(resp.json())  # {"status": "ok", "amount": "20 OAS", ...}
 client = OasyceClient("http://47.93.32.88:1317")
 signer = NativeSigner(wallet, client, chain_id="oasyce-testnet-1")
 ```
+
+`wallet` 在这里是 signer material，不是完整 identity 概念。默认产品路径应该从本机 binding 出发，而不是从助记词心智出发。
 
 ### Step 3: 开始操作 / Start operating
 
@@ -215,12 +243,12 @@ thronglets setup    # 自动检测所有已安装的 AI 工具，写入 MCP 配�
 
 ## Data Agent
 
-**一条命令，自动确权你的数据资产。** 后台守护进程：扫描本地文件 → 隐私检测 → SHA256 哈希 → 链上注册。macOS / Linux / Windows 通用。
+**一条命令，自动确权你的数据资产。** 后台守护进程：先完成一次本机 identity binding，然后扫描本地文件 → 隐私检测 → SHA256 哈希 → 链上注册。macOS / Linux / Windows 通用。
 
 One command to auto-manage your data assets. Background daemon: scan, detect PII, hash, register on-chain.
 
 ```bash
-oasyce-agent start                 # 启动。自动创建钱包、解 PoW、领空投、开始扫描
+oasyce-agent start                 # 首次: New/Recover → 绑定本机身份；之后: 直接启动
 oasyce-agent status                # 查看运行状态 + 已注册资产数
 oasyce-agent stop                  # 停止
 oasyce-agent scan ~/Documents      # 手动扫描（分类 + 隐私报告）
@@ -247,15 +275,14 @@ oasyce-agent stats                 # 资产统计
       "command": "oasyce-mcp",
       "env": {
         "OASYCE_NODE": "http://47.93.32.88:1317",
-        "OASYCE_FAUCET": "http://47.93.32.88:8080",
-        "OASYCE_MNEMONIC": "your 24 word mnemonic here"
+        "OASYCE_FAUCET": "http://47.93.32.88:8080"
       }
     }
   }
 }
 ```
 
-写工具需要 `OASYCE_MNEMONIC`。集体智能（perceive/act）用 Thronglets MCP：`thronglets setup`。
+写工具默认复用本机 binding：`~/.oasyce/identity.v1.json` + `~/.oasyce/wallet.json`。`OASYCE_MNEMONIC` 只是无状态 / 服务器场景下的显式 override。集体智能（perceive/act）用 Thronglets MCP：`thronglets setup`。
 
 ---
 
@@ -269,7 +296,7 @@ agent = create_react_agent(llm, oasyce_tools)
 agent.invoke({"input": "注册一个 AI 翻译服务，0.5 OAS/次"})
 ```
 
-写工具需要设置 `OASYCE_MNEMONIC` 环境变量。只读：`from oasyce_sdk.langchain_tools import oasyce_read_tools`
+写工具默认复用本机 binding；只有无状态运行时才需要 `OASYCE_MNEMONIC`。只读：`from oasyce_sdk.langchain_tools import oasyce_read_tools`
 
 ---
 

@@ -203,21 +203,28 @@ class OasyceReportIssue(BaseTool):
 
 
 # ---------------------------------------------------------------------------
-# Write tools — require OASYCE_MNEMONIC env var
+# Write tools — use the device wallet
 # ---------------------------------------------------------------------------
 
 _signer = None
+_identity = None
+
+
+def _get_identity():
+    global _identity
+    if _identity is not None:
+        return _identity
+    from .identity import IdentityResolver
+    _identity = IdentityResolver.resolve()
+    return _identity
 
 
 def _get_signer():
     global _signer
     if _signer is not None:
         return _signer
-    mnemonic = os.environ.get("OASYCE_MNEMONIC", "")
-    if not mnemonic:
-        raise ValueError("OASYCE_MNEMONIC not set. Generate with Wallet.create().")
-    from .crypto import Wallet, NativeSigner
-    wallet = Wallet.from_mnemonic(mnemonic)
+    from .crypto import NativeSigner
+    wallet = _get_identity().wallet
     chain_id = os.environ.get("OASYCE_CHAIN_ID", "oasyce-testnet-1")
     _signer = NativeSigner(wallet, _client, chain_id=chain_id)
     return _signer
@@ -297,7 +304,7 @@ class OasyceCreateWallet(BaseTool):
 
 class OasyceSendTokens(BaseTool):
     name: str = "oasyce_send_tokens"
-    description: str = "Send OAS tokens. Requires OASYCE_MNEMONIC env var."
+    description: str = "Send OAS tokens using the device wallet."
     args_schema: Type[BaseModel] = SendTokensInput
 
     def _run(self, to_address: str, amount_uoas: int) -> str:
@@ -311,7 +318,7 @@ class OasyceRegisterCapability(BaseTool):
     name: str = "oasyce_register_capability"
     description: str = (
         "Register an AI service on Oasyce marketplace. "
-        "Requires OASYCE_MNEMONIC."
+        "Uses the device wallet."
     )
     args_schema: Type[BaseModel] = RegisterCapabilityInput
 
@@ -329,7 +336,7 @@ class OasyceRegisterCapability(BaseTool):
 
 class OasyceInvokeCapability(BaseTool):
     name: str = "oasyce_invoke_capability"
-    description: str = "Invoke an AI service. Payment auto-escrowed. Requires OASYCE_MNEMONIC."
+    description: str = "Invoke an AI service. Payment auto-escrowed. Uses the device wallet."
     args_schema: Type[BaseModel] = InvokeCapabilityInput
 
     def _run(self, capability_id: str, input_data: str = "") -> str:
@@ -342,7 +349,7 @@ class OasyceInvokeCapability(BaseTool):
 
 class OasyceClaimInvocation(BaseTool):
     name: str = "oasyce_claim_invocation"
-    description: str = "Claim payment after challenge window (provider). Requires OASYCE_MNEMONIC."
+    description: str = "Claim payment after challenge window (provider). Uses the device wallet."
     args_schema: Type[BaseModel] = InvocationIdInput
 
     def _run(self, invocation_id: str) -> str:
@@ -354,7 +361,7 @@ class OasyceClaimInvocation(BaseTool):
 
 class OasyceDisputeInvocation(BaseTool):
     name: str = "oasyce_dispute_invocation"
-    description: str = "Dispute an invocation within challenge window (consumer). Requires OASYCE_MNEMONIC."
+    description: str = "Dispute an invocation within challenge window (consumer). Uses the device wallet."
     args_schema: Type[BaseModel] = DisputeInvocationInput
 
     def _run(self, invocation_id: str, reason: str) -> str:
@@ -366,7 +373,7 @@ class OasyceDisputeInvocation(BaseTool):
 
 class OasyceRegisterDataAsset(BaseTool):
     name: str = "oasyce_register_data_asset"
-    description: str = "Register a data asset with Bancor bonding curve. Requires OASYCE_MNEMONIC."
+    description: str = "Register a data asset with Bancor bonding curve. Uses the device wallet."
     args_schema: Type[BaseModel] = RegisterAssetInput
 
     def _run(self, name: str, content_hash: str, tags: str = "",
@@ -383,7 +390,7 @@ class OasyceRegisterDataAsset(BaseTool):
 
 class OasyceBuyShares(BaseTool):
     name: str = "oasyce_buy_data_shares"
-    description: str = "Buy shares of a data asset on bonding curve. Requires OASYCE_MNEMONIC."
+    description: str = "Buy shares of a data asset on bonding curve. Uses the device wallet."
     args_schema: Type[BaseModel] = AssetAmountInput
 
     def _run(self, asset_id: str, amount_uoas: int) -> str:
@@ -395,7 +402,7 @@ class OasyceBuyShares(BaseTool):
 
 class OasyceSellShares(BaseTool):
     name: str = "oasyce_sell_data_shares"
-    description: str = "Sell data asset shares back to bonding curve. Requires OASYCE_MNEMONIC."
+    description: str = "Sell data asset shares back to bonding curve. Uses the device wallet."
     args_schema: Type[BaseModel] = AssetSharesInput
 
     def _run(self, asset_id: str, shares: int) -> str:
@@ -407,7 +414,7 @@ class OasyceSellShares(BaseTool):
 
 class OasyceSubmitFeedback(BaseTool):
     name: str = "oasyce_submit_feedback"
-    description: str = "Rate a completed invocation (1-5). Affects provider reputation. Requires OASYCE_MNEMONIC."
+    description: str = "Rate a completed invocation (1-5). Affects provider reputation. Uses the device wallet."
     args_schema: Type[BaseModel] = FeedbackInput
 
     def _run(self, invocation_id: str, rating: int, comment: str = "") -> str:

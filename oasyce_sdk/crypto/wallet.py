@@ -7,13 +7,17 @@ Cosmos-compatible bech32 address, sign arbitrary bytes.
     wallet = Wallet.from_mnemonic("abandon abandon ... art")
     wallet = Wallet.from_private_key("a1b2c3...")
     wallet = Wallet.from_env()  # reads OASYCE_MNEMONIC
+    binding = Wallet.resolve_binding()  # wallet + source metadata
+    wallet = Wallet.auto()      # device wallet with conflict detection
 """
 
+from dataclasses import dataclass
 import hashlib
 import hmac
+import json
 import os
 import struct
-from typing import Optional
+from typing import Literal, Optional
 
 from .bech32 import bech32_encode
 
@@ -108,6 +112,18 @@ def _address_from_pubkey(pubkey: bytes) -> str:
 # ---------------------------------------------------------------------------
 
 
+WalletBindingSource = Literal["explicit", "env", "file"]
+
+
+@dataclass(frozen=True)
+class WalletBinding:
+    """Resolved signer material plus where that binding came from."""
+
+    wallet: "Wallet"
+    source: WalletBindingSource
+    path: str | None = None
+
+
 class Wallet:
     """Oasyce wallet holding a secp256k1 keypair."""
 
@@ -157,6 +173,83 @@ class Wallet:
             return cls.from_private_key(value)
         # Otherwise treat as mnemonic
         return cls.from_mnemonic(value)
+
+    @classmethod
+    def _wallet_path(cls) -> str:
+        return os.path.join(
+            os.environ.get("OASYCE_DIR", os.path.expanduser("~/.oasyce")),
+            "wallet.json",
+        )
+
+    @classmethod
+    def from_file(cls, path: Optional[str] = None) -> "Wallet":
+        """Load wallet from wallet.json (mnemonic or private_key)."""
+        wallet_path = path or cls._wallet_path()
+        if not os.path.exists(wallet_path):
+            raise FileNotFoundError(wallet_path)
+
+        with open(wallet_path) as f:
+            data = json.load(f)
+
+        if "mnemonic" in data:
+            return cls.from_mnemonic(data["mnemonic"])
+        if "private_key" in data:
+            return cls.from_private_key(data["private_key"])
+
+        raise ValueError(
+            f"{wallet_path} does not contain 'mnemonic' or 'private_key'"
+        )
+
+    @classmethod
+    def resolve_binding(cls, wallet: Optional["Wallet"] = None) -> WalletBinding:
+        """Resolve signer material plus binding source metadata.
+
+        Resolution order:
+        1. Explicit Wallet passed by code
+        2. OASYCE_MNEMONIC
+        3. ~/.oasyce/wallet.json
+
+        If env and file both exist but resolve to different addresses, fail fast.
+        """
+        if wallet is not None:
+            return WalletBinding(wallet=wallet, source="explicit")
+
+        wallet_path = cls._wallet_path()
+        file_wallet = None
+        if os.path.exists(wallet_path):
+            file_wallet = cls.from_file(wallet_path)
+
+        mnemonic = os.environ.get("OASYCE_MNEMONIC", "").strip()
+        if mnemonic:
+            env_wallet = cls.from_env("OASYCE_MNEMONIC")
+            if file_wallet and env_wallet.address != file_wallet.address:
+                raise RuntimeError(
+                    "Identity conflict on this device: "
+                    f"OASYCE_MNEMONIC -> {env_wallet.address}, "
+                    f"{wallet_path} -> {file_wallet.address}. "
+                    "Align them or pass an explicit Wallet to override."
+                )
+            return WalletBinding(wallet=env_wallet, source="env")
+
+        if file_wallet:
+            return WalletBinding(wallet=file_wallet, source="file", path=wallet_path)
+
+        raise FileNotFoundError(
+            "No identity found. Run 'oasyce-agent start' to create one."
+        )
+
+    @classmethod
+    def auto(cls) -> "Wallet":
+        """Resolve the device wallet.
+
+        Resolution order:
+        1. OASYCE_MNEMONIC
+        2. ~/.oasyce/wallet.json
+
+        If both exist but resolve to different addresses, fail fast. A single
+        device should not silently switch between two chain identities.
+        """
+        return cls.resolve_binding().wallet
 
     @property
     def address(self) -> str:

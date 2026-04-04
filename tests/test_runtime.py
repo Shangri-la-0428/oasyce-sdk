@@ -4,6 +4,7 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -19,6 +20,7 @@ from oasyce_sdk.agent.runtime import (
     synthesize_stimulus,
     outcome_to_writeback,
 )
+from oasyce_sdk.crypto.wallet import Wallet
 
 
 # ── Pure function tests ──────────────────────────────────────────
@@ -271,6 +273,27 @@ class TestAgentRuntime:
     def test_status(self, mock_thronglets, mock_psyche):
         s = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets).status()
         assert s["psyche"] is True and s["thronglets"] is True
+
+    def test_wallet_uses_device_resolution(self, mock_thronglets, mock_psyche):
+        r = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)
+        marker = object()
+        with patch("oasyce_sdk.agent.runtime.IdentityResolver.resolve") as mock_resolve:
+            mock_resolve.return_value = type(
+                "IdentityStub",
+                (),
+                {"wallet": marker},
+            )()
+            assert r.wallet is marker
+            mock_resolve.assert_called_once_with(wallet=None, session_id=r.session_id)
+        r.close()
+
+    def test_set_wallet_creates_explicit_identity(self, mock_thronglets, mock_psyche):
+        wallet = Wallet.create()
+        r = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)
+        r.set_wallet(wallet)
+        assert r.identity.binding_source == "explicit"
+        assert r.identity.address == wallet.address
+        r.close()
 
     def test_perceive(self, mock_thronglets, mock_psyche):
         r = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)

@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from ..client import OasyceClient
 from ..crypto.wallet import Wallet
+from ..identity import IdentityContext, IdentityResolver
 from .psyche_client import (
     PsycheClient,
-    ReplyEnvelope,
     SubjectivityKernel,
     WritebackSignal,
 )
@@ -127,18 +127,28 @@ class AgentRuntime:
 
         self.chain = OasyceClient(chain_url)
         self.chain_id = chain_id
+        self._identity: IdentityContext | None = None
         self._wallet: Wallet | None = None
         self.psyche = PsycheClient(psyche_url)
         self.thronglets = ThrongletsClient(thronglets_url)
 
     @property
+    def identity(self) -> IdentityContext:
+        if self._identity is None:
+            self._identity = IdentityResolver.resolve(
+                wallet=self._wallet,
+                session_id=self.session_id,
+            )
+            self._wallet = self._identity.wallet
+        return self._identity
+
+    @property
     def wallet(self) -> Wallet:
-        if self._wallet is None:
-            self._wallet = Wallet.from_env("OASYCE_MNEMONIC")
-        return self._wallet
+        return self.identity.wallet
 
     def set_wallet(self, wallet: Wallet) -> None:
         self._wallet = wallet
+        self._identity = IdentityResolver.resolve(wallet=wallet, session_id=self.session_id)
 
     def status(self) -> dict[str, Any]:
         """Check connectivity of all subsystems."""
@@ -148,7 +158,8 @@ class AgentRuntime:
             "chain": self.chain.health(),
             "psyche": self.psyche.is_available(),
             "thronglets": self.thronglets.is_available(),
-            "wallet": self._wallet.address if self._wallet else None,
+            "wallet": self._identity.address if self._identity else None,
+            "identity": self._identity.to_dict() if self._identity else None,
         }
 
     # ── The loop ─────────────────────────────────────────────────

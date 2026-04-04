@@ -1,4 +1,4 @@
-"""oasyce-agent CLI — unified data asset management.
+"""oasyce-agent CLI — local data asset management with optional chain upgrade.
 
 Daemon:
     oasyce-agent start          # launch background daemon
@@ -86,11 +86,66 @@ _TRADE_PROFILES = {
 }
 
 
+def _setup_identity():
+    """Ensure wallet exists. If not, ask once: new or recover.
+
+    Returns the Wallet and whether it was newly created.
+    """
+    from oasyce_sdk.crypto.wallet import Wallet
+    from oasyce_sdk.identity import IdentityResolver
+
+    wallet_path = os.path.join(daemon.OASYCE_DIR, "wallet.json")
+
+    # Already have identity — zero questions
+    if os.path.exists(wallet_path):
+        identity = IdentityResolver.resolve_local()
+        IdentityResolver.ensure_local_binding(identity.wallet)
+        print(f"  Identity: {identity.address}")
+        return identity.wallet, False
+
+    # No identity — one question
+    print("  Identity:")
+    print("     1) New — generate a fresh identity")
+    print("     2) Recover — I have a mnemonic")
+    choice = input("     Choose [1/2] (default: 1): ").strip() or "1"
+
+    if choice == "2":
+        mnemonic = input("     Mnemonic (24 words): ").strip()
+        try:
+            w = Wallet.from_mnemonic(mnemonic)
+        except Exception as e:
+            print(f"     Invalid mnemonic: {e}")
+            sys.exit(1)
+    else:
+        w = Wallet.create()
+
+    os.makedirs(daemon.OASYCE_DIR, exist_ok=True)
+    with open(wallet_path, "w") as f:
+        json.dump({"mnemonic": w.mnemonic, "address": w.address}, f, indent=2)
+
+    if sys.platform != "win32":
+        import stat
+        os.chmod(wallet_path, stat.S_IRUSR | stat.S_IWUSR)
+
+    IdentityResolver.ensure_local_binding(w)
+    label = "Recovered" if choice == "2" else "Created"
+    print(f"     {label}: {w.address}")
+
+    if choice != "2":
+        print(f"\n  ⚠  Back up your signer mnemonic from ~/.oasyce/wallet.json")
+
+    return w, choice != "2"
+
+
 def _first_run_setup(config_path: str):
-    """Interactive first-run: 2 questions, then the agent runs forever."""
+    """Interactive first-run: identity + 2 questions, then the agent runs forever."""
     from . import scanner
 
-    print("  First time? 2 questions, then I run forever.\n")
+    print("  First time? Let's set up.\n")
+
+    # --- Identity ---
+    _setup_identity()
+    print()
 
     # --- Question 1: scan paths ---
     defaults = scanner.DEFAULT_SCAN_PATHS
@@ -306,6 +361,7 @@ def cmd_privacy(args):
 def cmd_join(args):
     """Join an existing owner account by importing a mnemonic."""
     from oasyce_sdk.crypto.wallet import Wallet
+    from oasyce_sdk.identity import IdentityResolver
 
     wallet_path = os.path.join(daemon.OASYCE_DIR, "wallet.json")
     if os.path.exists(wallet_path):
@@ -332,6 +388,7 @@ def cmd_join(args):
         import stat
         os.chmod(wallet_path, stat.S_IRUSR | stat.S_IWUSR)
 
+    IdentityResolver.ensure_local_binding(w)
     print(f"Joined: {w.address}")
     print(f"This device now operates under the same owner account.")
     print(f"\n  oasyce-agent start   # begin scanning on this device")
@@ -389,15 +446,15 @@ def _print_db_summary(verbose: bool = False):
 
 
 def _print_wallet():
-    wp = os.path.join(daemon.OASYCE_DIR, "wallet.json")
-    if os.path.exists(wp):
-        with open(wp) as f:
-            data = json.load(f)
-        addr = data.get("address")
-        if addr:
-            print(f"Wallet: {addr}")
-            return
-    print("Wallet: not created yet")
+    from oasyce_sdk.identity import IdentityResolver
+
+    try:
+        identity = IdentityResolver.resolve_local()
+        print(f"Identity: {identity.address}")
+        return
+    except Exception:
+        pass
+    print("Identity: not created yet")
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +464,10 @@ def _print_wallet():
 def main():
     parser = argparse.ArgumentParser(
         prog="oasyce-agent",
-        description="Oasyce data agent — scan, protect, register, automate",
+        description=(
+            "Oasyce data agent — local-first data asset management that can "
+            "optionally bridge into chain registration and settlement."
+        ),
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -451,8 +511,8 @@ def main():
         _print_banner()
         parser.print_help()
         print("\nQuick start:")
-        print("  oasyce-agent start              # new device, new account")
-        print("  oasyce-agent join \"word1 ...\"    # join existing account")
+        print("  oasyce-agent start              # first run asks: new or recover")
+        print("  oasyce-agent join \"word1 ...\"    # import mnemonic directly")
         print("  oasyce-agent scan ~/Documents    # one-shot scan")
         sys.exit(1)
 
