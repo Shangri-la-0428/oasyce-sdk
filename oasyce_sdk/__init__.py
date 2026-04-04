@@ -50,6 +50,11 @@ __version__ = "0.10.0"
 
 
 def __getattr__(name: str):
+    if name == "agent":
+        from . import agent as agent_module
+
+        globals()["agent"] = agent_module
+        return agent_module
     if name in {"IdentityContext", "IdentityResolver"}:
         from .identity import IdentityContext, IdentityResolver
 
@@ -66,6 +71,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "OasyceClient",
+    "agent",
     "IdentityContext",
     "IdentityResolver",
     "SigilManager",
