@@ -15,6 +15,7 @@ from oasyce_sdk.identity import IdentityResolver, LocalIdentityBinding
 @pytest.fixture
 def temp_oasyce_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("OASYCE_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.delenv("OASYCE_MNEMONIC", raising=False)
     return tmp_path
 
@@ -80,7 +81,7 @@ class TestIdentityResolver:
         assert identity.session_id == "abc123"
         assert identity.sigil_id.startswith("SIG_")
 
-    def test_resolve_explicit_wallet_marks_override(self):
+    def test_resolve_explicit_wallet_marks_override(self, temp_oasyce_dir):
         wallet = Wallet.create()
 
         identity = IdentityResolver.resolve(wallet=wallet)
@@ -106,6 +107,37 @@ class TestIdentityResolver:
         assert identity.signer_source == "file"
         assert identity.signer_path == str(wallet_path)
         assert identity.account == wallet.address
+        assert identity.delegate == wallet.address
+
+    def test_resolve_imports_thronglets_owner_hint_when_binding_missing(
+        self, temp_oasyce_dir, monkeypatch
+    ):
+        home = temp_oasyce_dir / "home"
+        thronglets_dir = home / ".thronglets"
+        thronglets_dir.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+
+        wallet = Wallet.create()
+        wallet_path = temp_oasyce_dir / "wallet.json"
+        wallet_path.write_text(
+            json.dumps({"mnemonic": wallet.mnemonic, "address": wallet.address})
+        )
+        (thronglets_dir / "identity.v1.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "thronglets.identity.v1",
+                    "owner_account": "oasyce1owneraccount",
+                    "device_identity": "oasyce1deviceidentity",
+                    "binding_source": "manual",
+                    "updated_at": 123,
+                }
+            )
+        )
+
+        identity = IdentityResolver.resolve(session_id="abc123")
+
+        assert identity.binding_source == "compat_wallet"
+        assert identity.account == "oasyce1owneraccount"
         assert identity.delegate == wallet.address
 
     def test_resolve_local_ignores_env_override(self, temp_oasyce_dir, monkeypatch):
@@ -146,6 +178,33 @@ class TestIdentityResolver:
         assert (temp_oasyce_dir / "identity.v1.json").exists()
         loaded = LocalIdentityBinding.load(str(temp_oasyce_dir / "identity.v1.json"))
         assert loaded.signer_address == wallet.address
+
+    def test_ensure_local_binding_imports_thronglets_owner_hint(
+        self, temp_oasyce_dir, monkeypatch
+    ):
+        home = temp_oasyce_dir / "home"
+        thronglets_dir = home / ".thronglets"
+        thronglets_dir.mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        (thronglets_dir / "identity.v1.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "thronglets.identity.v1",
+                    "owner_account": "oasyce1owneraccount",
+                    "device_identity": "oasyce1deviceidentity",
+                    "binding_source": "manual",
+                    "updated_at": 123,
+                }
+            )
+        )
+
+        wallet = Wallet.create()
+        binding = IdentityResolver.ensure_local_binding(wallet)
+
+        assert binding.account == "oasyce1owneraccount"
+        assert binding.delegate == wallet.address
+        loaded = LocalIdentityBinding.load(str(temp_oasyce_dir / "identity.v1.json"))
+        assert loaded.account == "oasyce1owneraccount"
 
     def test_rejects_identity_file_delegate_signer_mismatch(self, temp_oasyce_dir):
         wallet = Wallet.create()

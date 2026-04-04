@@ -282,7 +282,7 @@ oasyce-agent stats                 # 资产统计
 }
 ```
 
-写工具默认复用本机 binding：`~/.oasyce/identity.v1.json` + `~/.oasyce/wallet.json`。`OASYCE_MNEMONIC` 只是无状态 / 服务器场景下的显式 override。集体智能（perceive/act）用 Thronglets MCP：`thronglets setup`。
+写工具默认复用本机 binding：`~/.oasyce/identity.v1.json` + `~/.oasyce/wallet.json`。如果你先用了 `Thronglets`，SDK 在第一次本地绑定时会可选吸收 `~/.thronglets/identity.v1.json` 里的 `owner_account` 作为 account hint。`OASYCE_MNEMONIC` 只是无状态 / 服务器场景下的显式 override。集体智能（perceive/act）用 Thronglets MCP：`thronglets setup`。
 
 ---
 

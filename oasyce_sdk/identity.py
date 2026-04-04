@@ -2,7 +2,9 @@
 
 This module keeps the SDK-level identity surface above raw signer material.
 `wallet.json` holds secp256k1 signer material. `identity.v1.json` holds the
-local semantic binding that sdk-facing surfaces share.
+local semantic binding that sdk-facing surfaces share. When users adopt
+Thronglets first, the local Thronglets owner binding may optionally seed the
+account hint for the first sdk binding.
 
 It is intentionally not the global identity authority for the whole stack.
 Psyche, Thronglets, Babel, and Chain must remain independently adoptable.
@@ -31,6 +33,14 @@ def _oasyce_dir() -> str:
 
 def _binding_path() -> str:
     return os.path.join(_oasyce_dir(), "identity.v1.json")
+
+
+def _home_dir() -> str:
+    return os.environ.get("HOME", os.path.expanduser("~"))
+
+
+def _thronglets_binding_path() -> str:
+    return os.path.join(_home_dir(), ".thronglets", "identity.v1.json")
 
 
 def _utc_now() -> str:
@@ -147,6 +157,32 @@ class LocalIdentityBinding:
 
 
 @dataclass(frozen=True)
+class ThrongletsOwnerHint:
+    """Optional owner/account hint imported from local Thronglets state."""
+
+    owner_account: str
+    source_path: str
+
+    @classmethod
+    def load(cls, path: str | None = None) -> "ThrongletsOwnerHint":
+        hint_path = path or _thronglets_binding_path()
+        if not os.path.exists(hint_path):
+            raise FileNotFoundError(hint_path)
+
+        with open(hint_path) as f:
+            data = json.load(f)
+
+        if data.get("schema_version") != "thronglets.identity.v1":
+            raise ValueError(f"{hint_path} is not a Thronglets identity binding")
+
+        owner_account = data.get("owner_account")
+        if not owner_account:
+            raise ValueError(f"{hint_path} does not contain owner_account")
+
+        return cls(owner_account=owner_account, source_path=hint_path)
+
+
+@dataclass(frozen=True)
 class IdentityContext:
     """Resolved local execution identity for one runtime surface."""
 
@@ -196,6 +232,13 @@ class IdentityResolver:
     """Single identity entrypoint for SDK surfaces."""
 
     @classmethod
+    def load_thronglets_owner_hint(cls) -> ThrongletsOwnerHint | None:
+        try:
+            return ThrongletsOwnerHint.load()
+        except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError):
+            return None
+
+    @classmethod
     def binding_path(cls) -> str:
         return _binding_path()
 
@@ -214,6 +257,7 @@ class IdentityResolver:
     ) -> LocalIdentityBinding:
         wallet_binding = Wallet.resolve_binding(wallet)
         binding_path = _binding_path()
+        owner_hint = cls.load_thronglets_owner_hint()
 
         if os.path.exists(binding_path):
             current = LocalIdentityBinding.load(binding_path)
@@ -231,7 +275,7 @@ class IdentityResolver:
         created = LocalIdentityBinding.default_for_wallet(
             wallet_binding.wallet,
             principal=principal,
-            account=account,
+            account=account if account is not None else owner_hint.owner_account if owner_hint else None,
             delegate=delegate,
         )
         created.save(binding_path)
@@ -248,6 +292,8 @@ class IdentityResolver:
         session_id: str | None = None,
         prefer_local_binding: bool = True,
     ) -> IdentityContext:
+        owner_hint = cls.load_thronglets_owner_hint()
+
         if wallet_binding.source == "explicit" and not prefer_local_binding:
             return IdentityContext(
                 wallet=wallet_binding.wallet,
@@ -256,7 +302,7 @@ class IdentityResolver:
                 signer_source=wallet_binding.source,
                 signer_path=wallet_binding.path,
                 principal=principal,
-                account=account,
+                account=account if account is not None else owner_hint.owner_account if owner_hint else None,
                 delegate=delegate,
                 session_id=session_id,
             )
@@ -284,7 +330,7 @@ class IdentityResolver:
             signer_source=wallet_binding.source,
             signer_path=wallet_binding.path,
             principal=principal,
-            account=account,
+            account=account if account is not None else owner_hint.owner_account if owner_hint else None,
             delegate=delegate,
             session_id=session_id,
         )
@@ -329,4 +375,4 @@ class IdentityResolver:
         )
 
 
-__all__ = ["IdentityContext", "IdentityResolver", "LocalIdentityBinding"]
+__all__ = ["IdentityContext", "IdentityResolver", "LocalIdentityBinding", "ThrongletsOwnerHint"]

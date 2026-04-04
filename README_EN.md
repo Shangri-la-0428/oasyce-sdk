@@ -45,11 +45,12 @@ oasyce-agent start     # that's it.
 
 What it does automatically:
 1. First run: asks once whether to create a new signer or recover an existing one, then stores signer material in `~/.oasyce/wallet.json` and semantic local binding in `~/.oasyce/identity.v1.json`
-2. Solves PoW puzzle, self-registers on chain for OAS airdrop
-3. Scans ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures
-4. **Privacy gate**: PII detection (email, phone, ID card, credit card, API key) — only `safe` files register
-5. New files → SHA256 → registered as on-chain data assets
-6. Repeats hourly in the background
+2. If Thronglets was already owner-bound on this machine, the SDK can optionally reuse that `owner_account` as the first local account hint
+3. Solves PoW puzzle, self-registers on chain for OAS airdrop
+4. Scans ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures
+5. **Privacy gate**: PII detection (email, phone, ID card, credit card, API key) — only `safe` files register
+6. New files → SHA256 → registered as on-chain data assets
+7. Repeats hourly in the background
 
 ```bash
 oasyce-agent status                # check status + registered asset count
