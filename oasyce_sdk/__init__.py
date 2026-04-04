@@ -8,6 +8,8 @@ Usage::
     caps = client.list_capabilities(tag="llm")
 """
 
+import importlib
+
 from .client import OasyceClient
 from .errors import (
     ChainError,
@@ -50,6 +52,11 @@ __version__ = "0.10.0"
 
 
 def __getattr__(name: str):
+    if name == "agent":
+        agent_module = importlib.import_module(".agent", __name__)
+
+        globals()["agent"] = agent_module
+        return agent_module
     if name in {"IdentityContext", "IdentityResolver"}:
         from .identity import IdentityContext, IdentityResolver
 
@@ -66,6 +73,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "OasyceClient",
+    "agent",
     "IdentityContext",
     "IdentityResolver",
     "SigilManager",
