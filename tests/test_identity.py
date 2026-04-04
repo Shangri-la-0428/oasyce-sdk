@@ -90,7 +90,7 @@ class TestIdentityResolver:
         assert identity.binding_source == "explicit"
         assert identity.binding_path is None
         assert identity.signer_source == "explicit"
-        assert identity.account == wallet.address
+        assert identity.account is None
         assert identity.delegate == wallet.address
 
     def test_resolve_falls_back_to_wallet_compat_when_binding_missing(self, temp_oasyce_dir):
@@ -106,7 +106,7 @@ class TestIdentityResolver:
         assert identity.binding_path is None
         assert identity.signer_source == "file"
         assert identity.signer_path == str(wallet_path)
-        assert identity.account == wallet.address
+        assert identity.account is None
         assert identity.delegate == wallet.address
 
     def test_resolve_imports_thronglets_owner_hint_when_binding_missing(
@@ -173,11 +173,12 @@ class TestIdentityResolver:
 
         binding = IdentityResolver.ensure_local_binding(wallet)
 
-        assert binding.account == wallet.address
+        assert binding.account is None
         assert binding.delegate == wallet.address
         assert (temp_oasyce_dir / "identity.v1.json").exists()
         loaded = LocalIdentityBinding.load(str(temp_oasyce_dir / "identity.v1.json"))
         assert loaded.signer_address == wallet.address
+        assert loaded.account is None
 
     def test_ensure_local_binding_imports_thronglets_owner_hint(
         self, temp_oasyce_dir, monkeypatch

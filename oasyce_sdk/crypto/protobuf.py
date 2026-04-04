@@ -230,6 +230,17 @@ F_REPEATED_BYTES = "repeated_bytes"
 # Schema: type_url -> list of (json_key, field_number, field_type)
 # Only the fields we actually use; unused fields are simply omitted (valid protobuf).
 MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
+    # --- Anchor ---
+    "/oasyce.anchor.v1.MsgAnchorTrace": [
+        ("signer", 1, F_STRING),
+        ("trace_id", 2, F_BYTES),
+        ("node_pubkey", 3, F_BYTES),
+        ("capability", 4, F_STRING),
+        ("outcome", 5, F_UINT32),
+        ("timestamp", 6, F_UINT64),
+        ("trace_signature", 7, F_BYTES),
+    ],
+
     # --- Onboarding ---
     "/oasyce.onboarding.v1.MsgSelfRegister": [
         ("creator", 1, F_STRING),
@@ -429,6 +440,27 @@ MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
         ("bond", 4, F_COIN),
     ],
 
+    # --- Delegate ---
+    "/oasyce.delegate.v1.MsgSetPolicy": [
+        ("principal", 1, F_STRING),
+        ("per_tx_limit", 2, F_COIN),
+        ("window_limit", 3, F_COIN),
+        ("window_seconds", 4, F_UINT64),
+        ("allowed_msgs", 5, F_REPEATED_STRING),
+        ("enrollment_token", 6, F_STRING),
+        ("expiration_seconds", 7, F_UINT64),
+    ],
+    "/oasyce.delegate.v1.MsgEnroll": [
+        ("delegate", 1, F_STRING),
+        ("principal", 2, F_STRING),
+        ("token", 3, F_STRING),
+        ("label", 4, F_STRING),
+    ],
+    "/oasyce.delegate.v1.MsgRevoke": [
+        ("principal", 1, F_STRING),
+        ("delegate", 2, F_STRING),
+    ],
+
     # --- Sigil ---
     "/oasyce.sigil.v1.MsgGenesis": [
         ("signer", 1, F_STRING),
@@ -514,6 +546,10 @@ def encode_msg(type_url: str, fields: Dict[str, Any]) -> bytes:
     # Special case: MsgSend has repeated Coin for amount
     if type_url == "/cosmos.bank.v1beta1.MsgSend":
         return _encode_msg_send(fields)
+    if type_url == "/oasyce.delegate.v1.MsgExec":
+        return _encode_msg_exec(fields)
+    if type_url == "/oasyce.anchor.v1.MsgAnchorBatch":
+        return _encode_msg_anchor_batch(fields)
 
     schema = MSG_SCHEMAS.get(type_url)
     if schema is None:
@@ -575,6 +611,44 @@ def _encode_msg_send(fields: Dict[str, Any]) -> bytes:
     for coin in amount:
         coin_bytes = _encode_coin_from_dict(coin)
         result += _encode_message(3, coin_bytes)
+    return result
+
+
+def _split_any_input(msg: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Normalize Any-like dicts into (type_url, value_fields)."""
+    if not isinstance(msg, dict):
+        raise TypeError("Any message input must be a dict")
+
+    type_url = msg.get("@type") or msg.get("type_url")
+    if not type_url:
+        raise ValueError("Any message input must include '@type' or 'type_url'")
+
+    if "value" in msg:
+        value = msg["value"]
+        if not isinstance(value, dict):
+            raise TypeError("Any message 'value' must be a dict")
+        return str(type_url), value
+
+    value = {k: v for k, v in msg.items() if k not in {"@type", "type_url"}}
+    return str(type_url), value
+
+
+def _encode_msg_exec(fields: Dict[str, Any]) -> bytes:
+    """Special encoder for delegate MsgExec with repeated Any inner msgs."""
+    result = b""
+    result += _encode_string(1, fields.get("delegate", ""))
+    for msg in fields.get("msgs", []) or []:
+        type_url, value = _split_any_input(msg)
+        result += _encode_message(2, encode_msg_as_any(type_url, value))
+    return result
+
+
+def _encode_msg_anchor_batch(fields: Dict[str, Any]) -> bytes:
+    """Special encoder for anchor MsgAnchorBatch with repeated MsgAnchorTrace."""
+    result = b""
+    result += _encode_string(1, fields.get("signer", ""))
+    for anchor in fields.get("anchors", []) or []:
+        result += _encode_message(2, encode_msg("/oasyce.anchor.v1.MsgAnchorTrace", anchor))
     return result
 
 

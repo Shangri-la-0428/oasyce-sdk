@@ -64,8 +64,6 @@ class LocalIdentityBinding:
     updated_at: str | None = None
 
     def __post_init__(self):
-        if self.account is None:
-            object.__setattr__(self, "account", self.signer_address)
         if self.delegate is None:
             object.__setattr__(self, "delegate", self.signer_address)
         if self.updated_at is None:
@@ -197,8 +195,6 @@ class IdentityContext:
     session_id: str | None = None
 
     def __post_init__(self):
-        if self.account is None:
-            object.__setattr__(self, "account", self.wallet.address)
         if self.delegate is None:
             object.__setattr__(self, "delegate", self.wallet.address)
 

@@ -220,13 +220,17 @@ def _get_identity():
 
 
 def _get_signer():
-    global _signer
+    global _signer, _identity
     if _signer is not None:
         return _signer
     from .crypto import NativeSigner
-    wallet = _get_identity().wallet
+    from .delegate_policy import ensure_chain_identity
+    identity = _get_identity()
     chain_id = os.environ.get("OASYCE_CHAIN_ID", "oasyce-testnet-1")
-    _signer = NativeSigner(wallet, _client, chain_id=chain_id)
+    identity = ensure_chain_identity(identity, _client, chain_id)
+    _identity = identity
+    wallet = identity.wallet
+    _signer = NativeSigner(wallet, _client, chain_id=chain_id, principal=identity.principal)
     return _signer
 
 

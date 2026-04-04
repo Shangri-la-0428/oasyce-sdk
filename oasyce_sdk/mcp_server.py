@@ -459,15 +459,19 @@ def _get_identity():
 
 def _get_signer():
     """Lazy-init NativeSigner from the unified device identity resolver."""
-    global _signer
+    global _signer, _identity
     if _signer is not None:
         return _signer
 
     from .crypto import NativeSigner
+    from .delegate_policy import ensure_chain_identity
 
-    wallet = _get_identity().wallet
+    identity = _get_identity()
     chain_id = os.environ.get("OASYCE_CHAIN_ID", "oasyce-testnet-1")
-    _signer = NativeSigner(wallet, _client, chain_id=chain_id)
+    identity = ensure_chain_identity(identity, _client, chain_id)
+    _identity = identity
+    wallet = identity.wallet
+    _signer = NativeSigner(wallet, _client, chain_id=chain_id, principal=identity.principal)
     return _signer
 
 
@@ -887,16 +891,39 @@ def set_delegate_policy(
 
     Uses the device wallet. Signer becomes the principal.
     """
+    global _identity, _signer
     try:
+        identity = _get_identity()
         msgs = [m.strip() for m in allowed_msgs.split(",")]
-        return _tx_result(_get_signer().set_delegate_policy(
+        result = _get_signer().set_delegate_policy(
             token=token,
             allowed_msgs=msgs,
             per_tx_uoas=per_tx_uoas,
             window_uoas=window_uoas,
             window_seconds=window_seconds,
             expiration_seconds=expiration_seconds,
-        ))
+        )
+        if result.success:
+            from .delegate_policy import LocalDelegatePolicy
+            from .identity import IdentityResolver
+
+            LocalDelegatePolicy(
+                principal=identity.wallet.address,
+                allowed_msgs=msgs,
+                enrollment_token=token,
+                per_tx_limit_uoas=per_tx_uoas,
+                window_limit_uoas=window_uoas,
+                window_seconds=window_seconds,
+                expiration_seconds=expiration_seconds,
+            ).save()
+            IdentityResolver.ensure_local_binding(
+                identity.wallet,
+                principal=identity.wallet.address,
+                account=identity.account or identity.wallet.address,
+            )
+            _identity = IdentityResolver.resolve(wallet=identity.wallet)
+            _signer = None
+        return _tx_result(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -912,12 +939,25 @@ def enroll_delegate(principal: str, token: str, label: str = "") -> str:
 
     Uses the device wallet. Signer becomes the delegate.
     """
+    global _identity, _signer
     try:
-        return _tx_result(_get_signer().enroll_delegate(
+        identity = _get_identity()
+        result = _get_signer().enroll_delegate(
             principal=principal,
             token=token,
             label=label,
-        ))
+        )
+        if result.success:
+            from .identity import IdentityResolver
+
+            IdentityResolver.ensure_local_binding(
+                identity.wallet,
+                principal=principal,
+                account=identity.account or principal,
+            )
+            _identity = IdentityResolver.resolve(wallet=identity.wallet)
+            _signer = None
+        return _tx_result(result)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

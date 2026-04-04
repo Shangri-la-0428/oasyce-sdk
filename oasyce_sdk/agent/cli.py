@@ -214,7 +214,7 @@ def cmd_start(args):
     print(msg)
     if ok:
         print(f"\n  Config:  {config_path}")
-        print(f"  Wallet:  {os.path.join(daemon.OASYCE_DIR, 'wallet.json')}")
+        print(f"  State:   {daemon.OASYCE_DIR}")
         print(f"  Logs:    {daemon.LOG_FILE}")
         print(f"\n  oasyce-agent status   # check progress")
         print(f"  oasyce-agent stop     # stop agent")
@@ -359,7 +359,7 @@ def cmd_privacy(args):
 
 
 def cmd_join(args):
-    """Join an existing owner account by importing a mnemonic."""
+    """Advanced recovery fallback: import signer material directly."""
     from oasyce_sdk.crypto.wallet import Wallet
     from oasyce_sdk.identity import IdentityResolver
 
@@ -369,7 +369,7 @@ def cmd_join(args):
             data = json.load(f)
         existing = data.get("address", "unknown")
         if not args.force:
-            print(f"Wallet already exists: {existing}")
+            print(f"Identity already exists: {existing}")
             print("Use --force to overwrite.")
             sys.exit(1)
 
@@ -389,8 +389,8 @@ def cmd_join(args):
         os.chmod(wallet_path, stat.S_IRUSR | stat.S_IWUSR)
 
     IdentityResolver.ensure_local_binding(w)
-    print(f"Joined: {w.address}")
-    print(f"This device now operates under the same owner account.")
+    print(f"Recovered: {w.address}")
+    print("This device now shares the same root account.")
     print(f"\n  oasyce-agent start   # begin scanning on this device")
 
 
@@ -457,6 +457,24 @@ def _print_wallet():
     print("Identity: not created yet")
 
 
+def _print_top_level_help():
+    print("usage: oasyce-agent <command>\n")
+    print(
+        "Oasyce data agent — local-first data asset management that can "
+        "optionally bridge into chain registration and settlement.\n"
+    )
+    print("Normal path:")
+    print("  start    Start agent in background")
+    print("  status   Show agent status")
+    print("  stop     Stop agent\n")
+    print("Manual:")
+    print("  scan     Scan directory (classify + privacy)")
+    print("  privacy  Check file/directory for PII")
+    print("  stats    Show registered asset statistics\n")
+    print("Advanced recovery fallback exists, but it is not part of the normal path.")
+    print("Use `oasyce-agent <command> --help` for command-specific help.")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -478,7 +496,11 @@ def main():
     sub.add_parser("run", help="Run in foreground (for debugging)")
 
     # Identity
-    p_join = sub.add_parser("join", help="Join existing owner account (import mnemonic)")
+    p_join = sub.add_parser(
+        "join",
+        help="Recover this device from an existing 24-word mnemonic (advanced)",
+        description="Advanced recovery fallback: import a 24-word mnemonic directly.",
+    )
     p_join.add_argument("mnemonic", help="24-word BIP39 mnemonic")
     p_join.add_argument("--force", action="store_true", help="Overwrite existing wallet")
 
@@ -492,7 +514,12 @@ def main():
 
     sub.add_parser("stats", help="Show registered asset statistics")
 
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    if argv == ["-h"] or argv == ["--help"]:
+        _print_top_level_help()
+        sys.exit(0)
+
+    args = parser.parse_args(argv)
 
     commands = {
         "start": cmd_start,
@@ -509,10 +536,9 @@ def main():
         commands[args.command](args)
     else:
         _print_banner()
-        parser.print_help()
+        _print_top_level_help()
         print("\nQuick start:")
         print("  oasyce-agent start              # first run asks: new or recover")
-        print("  oasyce-agent join \"word1 ...\"    # import mnemonic directly")
         print("  oasyce-agent scan ~/Documents    # one-shot scan")
         sys.exit(1)
 

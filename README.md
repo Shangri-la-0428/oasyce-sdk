@@ -74,6 +74,8 @@ signer = NativeSigner(wallet, client, chain_id="oasyce-testnet-1")
 
 `wallet` 在这里是 signer material，不是完整 identity 概念。默认产品路径应该从本机 binding 出发，而不是从助记词心智出发。
 
+第一次真正发起链上写操作时，SDK 现在会把这台首设备自动视为 root principal，并在本地写入共享 delegate policy。后续同 owner 的其他设备只要通过 Thronglets `share / join` 或本地 policy bootstrap 接入，就会自动 enroll，不需要再手工 `set-policy`。
+
 ### Step 3: 开始操作 / Start operating
 
 ```python
@@ -106,30 +108,21 @@ rep = client.get_reputation(wallet.address)
 print(f"信誉分: {rep.score}")
 ```
 
-### Step 4（可选）: 多 agent 委托 / Multi-agent delegation
-
-如果你是被人类授权操作的 agent，使用 delegate 模块：
+### Step 4（可选）: 多设备 / 多 agent 共享一个账户 / Shared account across devices and agents
 
 ```python
-# 人类先设 policy（一次）:
-# oasyced tx delegate set-policy --token "shared-secret" --per-tx 1000000 --daily 10000000 --allow "/oasyce.datarights.v1.MsgBuyShares"
+# 正常路径：
+# 1) 第一台设备第一次写链时，自动成为 root principal，并生成本地 delegate policy
+# 2) 之后第二台设备通过 Thronglets share/join 或本地 policy bootstrap 接入
+# 3) SDK 会在第一次写链时自动 enroll，并开始用 MsgExec 代理执行
 
-# Agent 自动注册
-signer.enroll_delegate(
-    principal="oasyce1...(人类地址)",
+# 高级回退（一般不需要）:
+signer.set_delegate_policy(
     token="shared-secret",
-    label="macbook-agent-1",
+    allowed_msgs=["/oasyce.datarights.v1.MsgBuyShares"],
+    per_tx_uoas=1_000_000,
+    window_uoas=10_000_000,
 )
-
-# Agent 代理执行（花的是人类的钱，受 policy 限制）
-signer.delegate_exec([{
-    "type_url": "/oasyce.datarights.v1.MsgBuyShares",
-    "value": {
-        "creator": "oasyce1...(人类地址)",
-        "asset_id": "DATA_0000000000000001",
-        "amount": {"denom": "uoas", "amount": "1000000"},
-    },
-}])
 ```
 
 ---
