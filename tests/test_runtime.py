@@ -273,6 +273,9 @@ class TestAgentRuntime:
     def test_status(self, mock_thronglets, mock_psyche):
         s = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets).status()
         assert s["psyche"] is True and s["thronglets"] is True
+        assert s["signer_address"].startswith("oasyce1")
+        assert s["delegate"] == s["signer_address"]
+        assert s["wallet"] == s["signer_address"]
 
     def test_wallet_uses_device_resolution(self, mock_thronglets, mock_psyche):
         r = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)

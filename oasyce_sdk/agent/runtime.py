@@ -152,14 +152,18 @@ class AgentRuntime:
 
     def status(self) -> dict[str, Any]:
         """Check connectivity of all subsystems."""
+        identity = self.identity
         return {
             "agent_id": self.agent_id,
             "session_id": self.session_id,
             "chain": self.chain.health(),
             "psyche": self.psyche.is_available(),
             "thronglets": self.thronglets.is_available(),
-            "wallet": self._identity.address if self._identity else None,
-            "identity": self._identity.to_dict() if self._identity else None,
+            "signer_address": identity.address,
+            "account": identity.account,
+            "delegate": identity.delegate,
+            "wallet": identity.address,  # compatibility alias; signer_address is canonical
+            "identity": identity.to_dict(),
         }
 
     # ── The loop ─────────────────────────────────────────────────

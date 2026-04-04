@@ -28,6 +28,7 @@ from typing import Any, List, Optional
 from .client import OasyceClient
 from .crypto.signer import NativeSigner
 from .crypto.wallet import Wallet
+from .delegate_policy import ensure_chain_identity
 from .identity import IdentityResolver
 from .agent.psyche_client import PsycheClient, SubjectivityKernel
 from .agent.thronglets_client import ThrongletsClient, Outcome
@@ -69,7 +70,14 @@ class SigilManager:
         self.identity = IdentityResolver.resolve(wallet=wallet)
         self._wallet = self.identity.wallet
         self.client = OasyceClient(chain_url)
-        self.signer = NativeSigner(self._wallet, self.client, chain_id=chain_id)
+        self.identity = ensure_chain_identity(self.identity, self.client, chain_id)
+        self._wallet = self.identity.wallet
+        self.signer = NativeSigner(
+            self._wallet,
+            self.client,
+            chain_id=chain_id,
+            principal=self.identity.principal,
+        )
         self.psyche = PsycheClient(psyche_url)
         self.thronglets = ThrongletsClient(thronglets_url)
         self.space = space

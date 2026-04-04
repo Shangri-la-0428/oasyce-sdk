@@ -55,6 +55,7 @@ class NativeSigner:
         wallet: Wallet,
         client,  # OasyceClient instance
         chain_id: str = "oasyce-testnet-1",
+        principal: Optional[str] = None,
         gas_limit: int = DEFAULT_GAS_LIMIT,
         fee: int = DEFAULT_FEE,
         memo: str = "",
@@ -62,6 +63,7 @@ class NativeSigner:
         self.wallet = wallet
         self.client = client
         self.chain_id = chain_id
+        self.principal = principal if principal and principal != wallet.address else None
         self.gas_limit = gas_limit
         self.fee = fee
         self.memo = memo
@@ -147,6 +149,34 @@ class NativeSigner:
 
         return result
 
+    @property
+    def actor_address(self) -> str:
+        """Economic actor for inner messages."""
+        return self.principal or self.wallet.address
+
+    @property
+    def delegated(self) -> bool:
+        """Whether this signer executes messages on behalf of a principal."""
+        return self.principal is not None
+
+    def _submit_single(
+        self,
+        type_url: str,
+        fields: Dict[str, Any],
+        *,
+        delegate_exec: bool = False,
+    ) -> TxResult:
+        """Broadcast one message, optionally wrapped as delegate execution."""
+        if delegate_exec and self.delegated:
+            return self.sign_and_broadcast([(
+                "/oasyce.delegate.v1.MsgExec",
+                {
+                    "delegate": self.wallet.address,
+                    "msgs": [{"@type": type_url, **fields}],
+                },
+            )])
+        return self.sign_and_broadcast([(type_url, fields)])
+
     def _broadcast(self, tx_bytes: bytes) -> TxResult:
         """POST signed transaction to chain REST endpoint."""
         import json
@@ -192,14 +222,15 @@ class NativeSigner:
 
     def send(self, to_address: str, amount_uoas: int) -> TxResult:
         """Send tokens."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/cosmos.bank.v1beta1.MsgSend",
             {
-                "from_address": self.wallet.address,
+                "from_address": self.actor_address,
                 "to_address": to_address,
                 "amount": [{"denom": "uoas", "amount": str(amount_uoas)}],
             },
-        )])
+            delegate_exec=True,
+        )
 
     def self_register(self, nonce: int) -> TxResult:
         """PoW self-registration on chain."""
@@ -218,10 +249,10 @@ class NativeSigner:
         rate_limit: int = 100,
     ) -> TxResult:
         """Register an AI capability on chain."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.capability.v1.MsgRegisterCapability",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "name": name,
                 "description": description,
                 "endpoint_url": endpoint,
@@ -229,7 +260,8 @@ class NativeSigner:
                 "tags": tags or [],
                 "rate_limit": rate_limit,
             },
-        )])
+            delegate_exec=True,
+        )
 
     def invoke_capability(
         self,
@@ -237,14 +269,15 @@ class NativeSigner:
         input_data: Optional[bytes] = None,
     ) -> TxResult:
         """Invoke an AI capability."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.capability.v1.MsgInvokeCapability",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "capability_id": capability_id,
                 "input": base64.b64encode(input_data or b"").decode(),
             },
-        )])
+            delegate_exec=True,
+        )
 
     def complete_invocation(
         self,
@@ -253,33 +286,36 @@ class NativeSigner:
         usage_report: str = "",
     ) -> TxResult:
         """Complete an invocation (provider side)."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.capability.v1.MsgCompleteInvocation",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "invocation_id": invocation_id,
                 "output_hash": output_hash,
                 "usage_report": usage_report,
             },
-        )])
+            delegate_exec=True,
+        )
 
     def claim_invocation(self, invocation_id: str) -> TxResult:
         """Claim payment after challenge window."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.capability.v1.MsgClaimInvocation",
-            {"creator": self.wallet.address, "invocation_id": invocation_id},
-        )])
+            {"creator": self.actor_address, "invocation_id": invocation_id},
+            delegate_exec=True,
+        )
 
     def dispute_invocation(self, invocation_id: str, reason: str) -> TxResult:
         """Dispute an invocation within challenge window."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.capability.v1.MsgDisputeInvocation",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "invocation_id": invocation_id,
                 "reason": reason,
             },
-        )])
+            delegate_exec=True,
+        )
 
     def register_asset(
         self,
@@ -291,10 +327,10 @@ class NativeSigner:
         service_url: str = "",
     ) -> TxResult:
         """Register a data asset."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.datarights.v1.MsgRegisterDataAsset",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "name": name,
                 "description": description,
                 "content_hash": content_hash,
@@ -303,29 +339,32 @@ class NativeSigner:
                 "parent_asset_id": "",
                 "service_url": service_url,
             },
-        )])
+            delegate_exec=True,
+        )
 
     def buy_shares(self, asset_id: str, amount_uoas: int) -> TxResult:
         """Buy shares of a data asset on the bonding curve."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.datarights.v1.MsgBuyShares",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "asset_id": asset_id,
                 "amount": {"denom": "uoas", "amount": str(amount_uoas)},
             },
-        )])
+            delegate_exec=True,
+        )
 
     def sell_shares(self, asset_id: str, shares: int) -> TxResult:
         """Sell shares of a data asset."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.datarights.v1.MsgSellShares",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "asset_id": asset_id,
                 "shares": str(shares),
             },
-        )])
+            delegate_exec=True,
+        )
 
     def submit_feedback(
         self,
@@ -334,15 +373,16 @@ class NativeSigner:
         comment: str = "",
     ) -> TxResult:
         """Submit feedback for a completed invocation."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.reputation.v1.MsgSubmitFeedback",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "invocation_id": invocation_id,
                 "rating": rating,
                 "comment": comment,
             },
-        )])
+            delegate_exec=True,
+        )
 
     def register_executor(
         self,
@@ -350,14 +390,15 @@ class NativeSigner:
         max_compute_units: int = 1000,
     ) -> TxResult:
         """Register as a work executor."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.work.v1.MsgRegisterExecutor",
             {
-                "executor": self.wallet.address,
+                "executor": self.actor_address,
                 "supported_task_types": task_types,
                 "max_compute_units": max_compute_units,
             },
-        )])
+            delegate_exec=True,
+        )
 
     def submit_task(
         self,
@@ -370,10 +411,10 @@ class NativeSigner:
         timeout_blocks: int = 100,
     ) -> TxResult:
         """Submit a compute task."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.work.v1.MsgSubmitTask",
             {
-                "creator": self.wallet.address,
+                "creator": self.actor_address,
                 "task_type": task_type,
                 "input_hash": base64.b64encode(input_hash).decode(),
                 "input_uri": input_uri,
@@ -382,7 +423,8 @@ class NativeSigner:
                 "redundancy": redundancy,
                 "timeout_blocks": timeout_blocks,
             },
-        )])
+            delegate_exec=True,
+        )
 
     def commit_result(
         self,
@@ -390,14 +432,15 @@ class NativeSigner:
         commit_hash: bytes,
     ) -> TxResult:
         """Commit a task result hash."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.work.v1.MsgCommitResult",
             {
-                "executor": self.wallet.address,
+                "executor": self.actor_address,
                 "task_id": task_id,
                 "commit_hash": base64.b64encode(commit_hash).decode(),
             },
-        )])
+            delegate_exec=True,
+        )
 
     def reveal_result(
         self,
@@ -409,10 +452,10 @@ class NativeSigner:
         unavailable: bool = False,
     ) -> TxResult:
         """Reveal a committed task result."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.work.v1.MsgRevealResult",
             {
-                "executor": self.wallet.address,
+                "executor": self.actor_address,
                 "task_id": task_id,
                 "output_hash": base64.b64encode(output_hash).decode(),
                 "output_uri": output_uri,
@@ -420,7 +463,8 @@ class NativeSigner:
                 "salt": base64.b64encode(salt).decode(),
                 "unavailable": unavailable,
             },
-        )])
+            delegate_exec=True,
+        )
 
     # --- Anchor (Thronglets → Chain) ---
 
@@ -434,10 +478,10 @@ class NativeSigner:
         trace_signature_hex: str,
     ) -> TxResult:
         """Anchor a single Thronglets trace on-chain."""
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.anchor.v1.MsgAnchorTrace",
             {
-                "signer": self.wallet.address,
+                "signer": self.actor_address,
                 "trace_id": base64.b64encode(bytes.fromhex(trace_id_hex)).decode(),
                 "node_pubkey": base64.b64encode(bytes.fromhex(node_pubkey_hex)).decode(),
                 "capability": capability,
@@ -445,7 +489,8 @@ class NativeSigner:
                 "timestamp": str(timestamp),
                 "trace_signature": base64.b64encode(bytes.fromhex(trace_signature_hex)).decode(),
             },
-        )])
+            delegate_exec=True,
+        )
 
     def anchor_batch(
         self,
@@ -459,7 +504,7 @@ class NativeSigner:
         anchor_msgs = []
         for t in traces[:50]:
             anchor_msgs.append({
-                "signer": self.wallet.address,
+                "signer": self.actor_address,
                 "trace_id": base64.b64encode(bytes.fromhex(t["trace_id_hex"])).decode(),
                 "node_pubkey": base64.b64encode(bytes.fromhex(t["node_pubkey_hex"])).decode(),
                 "capability": t["capability"],
@@ -467,10 +512,11 @@ class NativeSigner:
                 "timestamp": str(t["timestamp"]),
                 "trace_signature": base64.b64encode(bytes.fromhex(t["trace_signature_hex"])).decode(),
             })
-        return self.sign_and_broadcast([(
+        return self._submit_single(
             "/oasyce.anchor.v1.MsgAnchorBatch",
-            {"signer": self.wallet.address, "anchors": anchor_msgs},
-        )])
+            {"signer": self.actor_address, "anchors": anchor_msgs},
+            delegate_exec=True,
+        )
 
     # --- Delegate (multi-agent delegation) ---
 
@@ -643,4 +689,7 @@ class NativeSigner:
         return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgMerge", fields)])
 
     def __repr__(self) -> str:
-        return f"NativeSigner(address={self.wallet.address!r}, chain={self.chain_id!r})"
+        return (
+            f"NativeSigner(address={self.wallet.address!r}, principal={self.principal!r}, "
+            f"chain={self.chain_id!r})"
+        )

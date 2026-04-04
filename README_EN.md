@@ -65,6 +65,7 @@ Config: `~/.oasyce/agent.json` (auto-generated, editable for scan paths, interva
 > DataVault (odv) is now fully absorbed into oasyce-sdk. No separate install needed.
 
 For code-first flows, `Wallet.create()` is the first-device path and `Wallet.auto()` is the standard reuse path for later runs or tool integrations.
+On the first real chain write, the SDK now treats that device as the root principal by default and persists a local shared delegate policy. Later devices can inherit that bootstrap through Thronglets `share / join` or the local policy file, so normal users do not need to manually call `set-policy`.
 
 ## MCP Server
 
