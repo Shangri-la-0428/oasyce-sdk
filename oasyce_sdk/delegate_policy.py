@@ -238,10 +238,9 @@ def ensure_chain_identity(identity: IdentityContext, client, chain_id: str) -> I
         )
         return IdentityResolver.resolve(wallet=identity.wallet)
 
-    # A foreign owner hint without a policy bootstrap is informational only.
-    # Do not silently convert this device into a new root principal.
-    if identity.account and identity.account != identity.address:
-        return identity
+    # A foreign owner hint without chain authorization bootstrap is informational only.
+    # It may improve local UX, but it must not block chain from establishing its own
+    # source of truth for this device.
 
     root_policy_exists = False
     try:

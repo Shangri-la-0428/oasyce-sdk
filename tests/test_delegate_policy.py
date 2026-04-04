@@ -224,15 +224,22 @@ class TestLocalDelegatePolicy:
         assert saved_policy.principal == wallet.address
         assert saved_policy.allowed_msgs == DEFAULT_ALLOWED_MSG_TYPES
 
-    def test_ensure_chain_identity_keeps_foreign_owner_hint_without_policy(
-        self, temp_oasyce_dir
+    def test_ensure_chain_identity_bootstraps_root_when_owner_hint_lacks_authority(
+        self, temp_oasyce_dir, monkeypatch
     ):
         wallet = Wallet.create()
         IdentityResolver.ensure_local_binding(wallet, account="oasyce1owner")
         identity = IdentityResolver.resolve(wallet=wallet)
 
+        monkeypatch.setattr(
+            "oasyce_sdk.delegate_policy.NativeSigner.set_delegate_policy",
+            lambda self, **kwargs: TxResult("txhash", True, 0, ""),
+        )
+
         resolved = ensure_chain_identity(identity, DummyClient(), "oasyce-testnet-1")
 
-        assert resolved.principal is None
-        assert resolved.account == "oasyce1owner"
-        assert load_local_delegate_policy() is None
+        assert resolved.principal == wallet.address
+        assert resolved.account == wallet.address
+        saved_policy = load_local_delegate_policy()
+        assert saved_policy is not None
+        assert saved_policy.principal == wallet.address

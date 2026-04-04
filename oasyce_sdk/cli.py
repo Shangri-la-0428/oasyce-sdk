@@ -14,14 +14,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 from .agent import daemon
 from .agent import cli as agent_cli
 from .identity import IdentityResolver
+
+DEFAULT_NODE_URL = "http://47.93.32.88:1317"
+DEFAULT_CHAIN_ID = "oasyce-testnet-1"
+DEFAULT_FAUCET_URL = "http://47.93.32.88:8080"
+MIN_READY_BALANCE_UOAS = 1_000_000
 
 
 def _home_dir() -> Path:
@@ -83,6 +92,101 @@ def _run_json_command(cmd: list[str]) -> dict:
 
 def _default_share_path() -> Path:
     return Path(daemon.OASYCE_DIR) / "oasyce-connection.json"
+
+
+def _load_agent_config(config_path: str) -> dict:
+    config_file = Path(config_path)
+    if not config_file.exists():
+        return {}
+    return json.loads(config_file.read_text(encoding="utf-8"))
+
+
+def _faucet_url() -> str:
+    return os.environ.get("OASYCE_FAUCET", DEFAULT_FAUCET_URL)
+
+
+def _ensure_chain_registration(client, signer, address: str) -> None:
+    try:
+        client.get_registration(address)
+        return
+    except Exception:
+        pass
+
+    from .client import OasyceClient
+
+    pow_result = OasyceClient.solve_pow(address, difficulty=16)
+    result = signer.self_register(pow_result.nonce)
+    if result.success or "already registered" in result.raw_log.lower():
+        return
+    raise RuntimeError(
+        "chain self-registration failed: "
+        f"code={result.code} {result.raw_log or 'unknown error'}"
+    )
+
+
+def _request_faucet_tokens(address: str) -> str:
+    query = urlencode({"address": address})
+    with urlopen(f"{_faucet_url()}/faucet?{query}", timeout=15) as resp:
+        return resp.read().decode("utf-8")
+
+
+def _balance_uoas(balance) -> int:
+    if hasattr(balance, "amount_uoas"):
+        return int(balance.amount_uoas)
+    if hasattr(balance, "amount"):
+        return int(balance.amount)
+    raise AttributeError("balance object has no amount_uoas/amount field")
+
+
+def _ensure_spendable_balance(client, address: str) -> None:
+    balance = client.get_balance(address)
+    if _balance_uoas(balance) >= MIN_READY_BALANCE_UOAS:
+        return
+
+    _request_faucet_tokens(address)
+
+    for _ in range(10):
+        time.sleep(1)
+        balance = client.get_balance(address)
+        if _balance_uoas(balance) >= MIN_READY_BALANCE_UOAS:
+            return
+
+    raise RuntimeError(
+        "faucet requested but signer balance is still below readiness threshold "
+        f"({_balance_uoas(balance)} < {MIN_READY_BALANCE_UOAS})"
+    )
+
+
+def _ensure_chain_ready(config_path: str) -> dict:
+    from .client import OasyceClient
+    from .crypto.signer import NativeSigner
+    from .delegate_policy import ensure_chain_identity
+
+    config = _load_agent_config(config_path)
+    node_url = config.get("node_url", DEFAULT_NODE_URL)
+    chain_id = config.get("chain_id", DEFAULT_CHAIN_ID)
+
+    client = OasyceClient(node_url)
+    if not client.health():
+        raise RuntimeError(f"chain node is unhealthy: {node_url}")
+
+    identity = IdentityResolver.resolve_local()
+    signer = NativeSigner(identity.wallet, client, chain_id=chain_id)
+
+    _ensure_chain_registration(client, signer, identity.address)
+    _ensure_spendable_balance(client, identity.address)
+    identity = ensure_chain_identity(IdentityResolver.resolve_local(), client, chain_id)
+
+    balance = client.get_balance(identity.address)
+    return {
+        "node_url": node_url,
+        "chain_id": chain_id,
+        "address": identity.address,
+        "principal": identity.principal,
+        "account": identity.account,
+        "balance_uoas": _balance_uoas(balance),
+        "balance_oas": _balance_uoas(balance) / 1_000_000,
+    }
 
 
 def _psyche_configured_targets() -> list[str]:
@@ -219,6 +323,11 @@ def cmd_start(args) -> None:
     config_path = agent_cli._ensure_default_agent_config()
 
     issues: list[str] = []
+    chain_ready = None
+    try:
+        chain_ready = _ensure_chain_ready(config_path)
+    except Exception as exc:
+        issues.append(f"Chain readiness skipped: {exc}")
     _best_effort("Thronglets setup skipped", _bootstrap_thronglets, issues)
     _best_effort("Psyche setup skipped", _setup_psyche, issues)
 
@@ -227,6 +336,13 @@ def cmd_start(args) -> None:
     print(message)
     print(f"Config: {config_path}")
     print(f"State:  {daemon.OASYCE_DIR}")
+    if chain_ready:
+        print(
+            "Chain:  ready "
+            f"({chain_ready['address']}, {chain_ready['balance_oas']:.6f} OAS)"
+        )
+        if chain_ready.get("principal"):
+            print(f"Principal: {chain_ready['principal']}")
 
     if issues:
         print("\nWarnings:")
@@ -264,6 +380,11 @@ def cmd_join(args) -> None:
     config_path = agent_cli._ensure_default_agent_config()
 
     issues: list[str] = []
+    chain_ready = None
+    try:
+        chain_ready = _ensure_chain_ready(config_path)
+    except Exception as exc:
+        issues.append(f"Chain readiness skipped: {exc}")
     _best_effort("Thronglets bootstrap skipped", _bootstrap_thronglets, issues)
     _best_effort("Psyche setup skipped", _setup_psyche, issues)
 
@@ -271,6 +392,11 @@ def cmd_join(args) -> None:
     running = started or "already running" in message.lower()
     print(message)
     print(f"Config: {config_path}")
+    if chain_ready:
+        print(
+            "Chain:  ready "
+            f"({chain_ready['address']}, {chain_ready['balance_oas']:.6f} OAS)"
+        )
 
     if issues:
         print("\nWarnings:")
