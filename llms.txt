@@ -12,6 +12,15 @@ Normal user path on a new machine:
 
     oasyce start
 
+If the machine is receiving a handoff file from another device, prefer:
+
+    oasyce join
+
+In one line:
+
+    first device / no handoff file -> oasyce start
+    receiving device / handoff file already present -> oasyce join
+
 Multi-device path:
 
     oasyce share
@@ -42,6 +51,8 @@ For code-first signer flows:
     from oasyce_sdk.crypto import Wallet
     wallet = Wallet.create()   # first device
     wallet = Wallet.auto()     # later runs / local reuse
+
+If the machine is joining from another device's handoff file, do not start with `Wallet.create()`. Use `oasyce join` first so local binding is materialized before code-level signer flows.
 
 ## OasyceClient Methods (35 queries + 27 TX builders)
 

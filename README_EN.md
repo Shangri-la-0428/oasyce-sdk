@@ -34,6 +34,17 @@ pip install oasyce-sdk
 oasyce start
 ```
 
+If this machine is receiving a handoff file from another device, or you already know it is joining an existing environment, do not start with `start`. Use:
+
+```bash
+oasyce join
+```
+
+In one line:
+
+- first device / no handoff file: `oasyce start`
+- secondary device / handoff file already present: `oasyce join`
+
 If this machine previously had the legacy `oasyce` / `oasyce-net` package and
 `oasyce` still fails with `ModuleNotFoundError: No module named 'oasyce'`,
 remove the stale front door first and reinstall:
@@ -119,6 +130,12 @@ pip install oasyce-sdk
 oasyce start           # dumb-proof front door
 ```
 
+If this is a receiving machine and the handoff file is already on the Desktop, prefer:
+
+```bash
+oasyce join            # receives ~/Desktop/oasyce-connection.json by default
+```
+
 What it does automatically:
 1. First run: asks once whether to create a new signer or recover an existing one, then stores signer material in `~/.oasyce/wallet.json` and semantic local binding in `~/.oasyce/identity.v1.json`
 2. If Thronglets was already owner-bound on this machine, the SDK can optionally reuse that `owner_account` as the first local account hint
@@ -142,6 +159,7 @@ Config: `~/.oasyce/agent.json` (auto-generated, editable for scan paths, interva
 > DataVault (odv) is now fully absorbed into oasyce-sdk. No separate install needed.
 
 For code-first flows, `Wallet.create()` is the first-device path and `Wallet.auto()` is the standard reuse path for later runs or tool integrations.
+If the machine is joining from another device's handoff file, use `oasyce join` first and let the front door materialize local binding before code-level signer flows.
 On the first real chain write, the SDK now treats that device as the root principal by default and persists a local shared delegate policy. Later devices can inherit that bootstrap through Thronglets `share / join` or the local policy file, so normal users do not need to manually call `set-policy`.
 
 ## MCP Server

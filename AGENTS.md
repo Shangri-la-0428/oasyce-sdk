@@ -16,6 +16,13 @@ pip install oasyce-sdk
 oasyce start
 ```
 
+If the machine is receiving a handoff file from another device, do not default to `start`. Use:
+
+```bash
+pip install oasyce-sdk
+oasyce join
+```
+
 What this should do in the normal path:
 - reuse or create the local signer / binding
 - write the default agent config
@@ -58,7 +65,7 @@ pip install oasyce-sdk
 oasyce start
 ```
 
-This is now the normal path. `oasyce-agent` remains the lower-level data-agent surface.
+This is the normal first-device path. On a receiving machine with a handoff file, use `oasyce join` first, then `oasyce start` only if you still want the background data agent running. `oasyce-agent` remains the lower-level data-agent surface.
 
 ### Path C: "I want to code with Sigils" (Python library)
 
@@ -114,7 +121,7 @@ pip install oasyce-sdk[all]       # + MCP + LangChain
 ```bash
 oasyce start          # normal path: local binding + Thronglets + Psyche + agent
 oasyce share          # export connection file to ~/Desktop/oasyce-connection.json (self-describing bootstrap manifest inside)
-oasyce join <file>    # join another device from a connection file
+oasyce join [file]    # join another device from a connection file; defaults to ~/Desktop/oasyce-connection.json
 oasyce status         # unified local stack status
 
 oasyce-agent stop     # stop the data agent
@@ -123,7 +130,7 @@ oasyce-agent scan <path>   # one-shot file scan
 oasyce-agent privacy <path>  # PII check
 ```
 
-If the user asks how to add another machine, prefer `oasyce share` on the primary device and have them send the exported file. The connection file identifies itself as the handoff artifact and declares a preferred surface, so the receiving AI should read the file first instead of assuming `oasyce join` unconditionally.
+If the user asks how to add another machine, prefer `oasyce share` on the primary device and have them send the exported file. On the receiving machine, prefer `oasyce join` before `oasyce start`. The connection file identifies itself as the handoff artifact and declares a preferred surface, so the receiving AI should read the file first instead of assuming a new-wallet flow.
 
 If the user sends only the SDK repository URL, treat it as a locator for the front door rather than as a request to work from a source checkout. The default receiving-machine path is:
 
