@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.6] - 2026-04-06
+
+- `oasyce join` now defaults to `~/Desktop/oasyce-connection.json` on the receiving machine, matching the normal handoff flow
+- the front door now refuses stale `thronglets` runtimes that cannot verify signed `identity.v2` connection files, instead of silently bootstrapping against them
+- installed runtimes are now the default authority for `oasyce`; source checkouts only participate when explicitly opted in for development
+
 ## [0.10.5] - 2026-04-05
 
 - `oasyce share` now exports a self-describing join handoff artifact and always includes the richer `oasyce` surface when present

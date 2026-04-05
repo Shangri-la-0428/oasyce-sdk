@@ -31,6 +31,7 @@ DEFAULT_NODE_URL = "http://47.93.32.88:1317"
 DEFAULT_CHAIN_ID = "oasyce-testnet-1"
 DEFAULT_FAUCET_URL = "http://47.93.32.88:8080"
 MIN_READY_BALANCE_UOAS = 1_000_000
+THRONGLETS_IDENTITY_SCHEMA_V2 = "thronglets.identity.v2"
 
 
 def _home_dir() -> Path:
@@ -39,6 +40,15 @@ def _home_dir() -> Path:
 
 def _workspace_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _allow_dev_runtime_fallback() -> bool:
+    return os.environ.get("OASYCE_ALLOW_DEV_RUNTIME", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _thronglets_data_dir() -> Path:
@@ -67,13 +77,14 @@ def _available_thronglets_commands() -> list[list[str]]:
     managed = _managed_thronglets_path()
     if managed.exists() and os.access(managed, os.X_OK):
         commands.append([str(managed)])
-    local_dev = _dev_thronglets_bin_path()
-    if local_dev and os.access(local_dev, os.X_OK):
-        commands.append([str(local_dev)])
     if shutil.which("thronglets"):
         commands.append(["thronglets"])
     if shutil.which("npx"):
         commands.append(["npx", "-y", "thronglets"])
+    if _allow_dev_runtime_fallback():
+        local_dev = _dev_thronglets_bin_path()
+        if local_dev and os.access(local_dev, os.X_OK):
+            commands.append([str(local_dev)])
 
     unique: list[list[str]] = []
     seen: set[tuple[str, ...]] = set()
@@ -119,12 +130,12 @@ def _resolve_psyche_base_command() -> list[str]:
         return ["psyche-ai"]
     if shutil.which("npx"):
         return ["npx", "-y", "psyche-ai"]
-    local_cli = _dev_psyche_cli_path()
-    if local_cli and shutil.which("node"):
-        return ["node", str(local_cli)]
+    if _allow_dev_runtime_fallback():
+        local_cli = _dev_psyche_cli_path()
+        if local_cli and shutil.which("node"):
+            return ["node", str(local_cli)]
     raise RuntimeError(
-        "Psyche is not available. Install `psyche-ai`, make `npx` available, "
-        "or keep a local oasyce_psyche checkout with `node`."
+        "Psyche is not available. Install `psyche-ai` or make `npx` available."
     )
 
 
@@ -154,6 +165,20 @@ def _thronglets_version_data(cmd: list[str]) -> dict:
         return _run_json_command(_thronglets_command(cmd, "version", "--json")).get("data", {})
     except Exception:
         return {}
+
+
+def _thronglets_identity_schema_version(cmd: list[str]) -> str | None:
+    data = _thronglets_version_data(cmd)
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        value = summary.get("identity_schema_version")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _thronglets_supports_identity_v2(cmd: list[str]) -> bool:
+    return _thronglets_identity_schema_version(cmd) == THRONGLETS_IDENTITY_SCHEMA_V2
 
 
 def _thronglets_supports_surface(cmd: list[str], surface: str) -> bool:
@@ -227,22 +252,25 @@ def _ensure_thronglets_surface(surface: str) -> list[str]:
 
 def _ensure_canonical_thronglets_runtime() -> list[str]:
     managed = _managed_thronglets_command()
-    if managed:
+    if managed and _thronglets_supports_identity_v2(managed):
         return managed
 
     for candidate in _available_thronglets_commands():
+        if not _thronglets_supports_identity_v2(candidate):
+            continue
         try:
             _run_checked(_thronglets_command(candidate, "setup"))
         except Exception:
             continue
         managed = _managed_thronglets_command()
-        if managed:
+        if managed and _thronglets_supports_identity_v2(managed):
             return managed
 
     command = _resolve_thronglets_base_command()
     raise RuntimeError(
-        "The canonical Thronglets managed runtime is unavailable. Initialize it with "
-        f"`{' '.join(command)} setup` and retry."
+        "The canonical Thronglets managed runtime is unavailable or too old for signed "
+        "identity.v2 connection files. Initialize it with a current runtime "
+        f"(`{' '.join(command)} setup`) and retry."
     )
 
 
@@ -353,7 +381,7 @@ def _psyche_configured_targets() -> list[str]:
     codex = _home_dir() / ".codex" / "config.toml"
     if codex.exists():
         text = codex.read_text(encoding="utf-8")
-        if "[mcp_servers.psyche]" in text:
+        if "[mcp_servers.psyche]" in text and _codex_config_loadable():
             targets.append("Codex")
 
     json_targets = [
@@ -375,12 +403,35 @@ def _psyche_configured_targets() -> list[str]:
     return targets
 
 
+def _psyche_broken_targets() -> list[str]:
+    targets: list[str] = []
+    codex = _home_dir() / ".codex" / "config.toml"
+    if codex.exists():
+        text = codex.read_text(encoding="utf-8")
+        if "[mcp_servers.psyche]" in text and not _codex_config_loadable():
+            targets.append("Codex")
+    return targets
+
+
+def _codex_config_loadable() -> bool:
+    if not shutil.which("codex"):
+        return False
+    proc = subprocess.run(
+        ["codex", "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    return proc.returncode == 0
+
+
 def _psyche_entry_mode() -> str:
     if shutil.which("psyche-ai"):
         return "installed"
     if shutil.which("npx"):
         return "npx"
-    if _dev_psyche_cli_path() and shutil.which("node"):
+    if _allow_dev_runtime_fallback() and _dev_psyche_cli_path() and shutil.which("node"):
         return "local_repo"
     return "missing"
 
@@ -405,9 +456,11 @@ def _collect_status() -> dict:
         active_runtime = None
 
     psyche_targets = _psyche_configured_targets()
+    psyche_broken_targets = _psyche_broken_targets()
     psyche = {
         "entry": _psyche_entry_mode(),
         "configured_targets": psyche_targets,
+        "broken_targets": psyche_broken_targets,
         "configured": bool(psyche_targets),
     }
 
@@ -472,7 +525,13 @@ def _print_status_report(status: dict) -> None:
                 print(f"Canonical:  {managed_runtime}")
 
     targets = psyche["configured_targets"]
-    target_summary = ", ".join(targets) if targets else "not configured"
+    broken_targets = psyche.get("broken_targets", [])
+    if targets:
+        target_summary = ", ".join(targets)
+    elif broken_targets:
+        target_summary = f"broken: {', '.join(broken_targets)}"
+    else:
+        target_summary = "not configured"
     print(f"\nPsyche: {target_summary} (entry: {psyche['entry']})")
 
 
@@ -551,7 +610,8 @@ def cmd_share(args) -> None:
 
 
 def cmd_join(args) -> None:
-    connection_file = str(Path(args.file).expanduser())
+    raw_file = args.file or str(_default_share_path())
+    connection_file = str(Path(raw_file).expanduser())
     _run_checked(
         _thronglets_command(
             _ensure_canonical_thronglets_runtime(),
@@ -624,7 +684,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_join = sub.add_parser("join", help="Join this device using a connection file")
-    p_join.add_argument("file", help="Connection file exported from a primary device")
+    p_join.add_argument(
+        "file",
+        nargs="?",
+        help="Connection file exported from a primary device (defaults to ~/Desktop/oasyce-connection.json)",
+    )
 
     p_status = sub.add_parser("status", help="Show local stack status")
     p_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
