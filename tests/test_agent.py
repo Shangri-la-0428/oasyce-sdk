@@ -256,23 +256,91 @@ class TestDaemon:
     def test_is_alive_current_process(self):
         assert daemon._is_alive(os.getpid()) is True
 
-    def test_read_pid_missing(self):
+    def test_looks_like_agent_run_module_entrypoint(self):
+        assert daemon._looks_like_agent_run("/usr/bin/python3 -m oasyce_sdk.agent run") is True
+        assert daemon._looks_like_agent_run("/usr/bin/python3 -m something_else run") is False
+
+    def test_looks_like_agent_run_console_entrypoint(self):
+        assert daemon._looks_like_agent_run("/usr/local/bin/oasyce-agent run") is True
+        assert daemon._looks_like_agent_run("/usr/local/bin/oasyce-agent status") is False
+
+    def test_read_pid_missing(self, monkeypatch):
+        monkeypatch.setattr(daemon, "_discover_agent_pids", lambda: [])
         if os.path.exists(daemon.PID_FILE):
             os.remove(daemon.PID_FILE)
         assert daemon._read_pid() is None
 
-    def test_status_not_running(self):
+    def test_read_pid_prefers_live_process_truth(self, monkeypatch):
+        monkeypatch.setattr(daemon, "_discover_agent_pids", lambda: [456])
+        monkeypatch.setattr(daemon, "_read_pid_file", lambda: None)
+        assert daemon._read_pid() == 456
+
+    def test_status_not_running(self, monkeypatch):
+        monkeypatch.setattr(daemon, "_discover_agent_pids", lambda: [])
         if os.path.exists(daemon.PID_FILE):
             os.remove(daemon.PID_FILE)
         running, msg = daemon.status()
         assert running is False
         assert "not running" in msg.lower()
 
-    def test_stop_not_running(self):
+    def test_stop_not_running(self, monkeypatch):
+        monkeypatch.setattr(daemon, "_discover_agent_pids", lambda: [])
         if os.path.exists(daemon.PID_FILE):
             os.remove(daemon.PID_FILE)
         ok, msg = daemon.stop()
         assert ok is False
+
+    def test_start_is_idempotent_when_agent_is_already_running(self, monkeypatch):
+        monkeypatch.setattr(daemon, "_reconcile_agent_pids", lambda: [123])
+
+        ok, msg = daemon.start()
+
+        assert ok is True
+        assert "already running" in msg.lower()
+        assert "123" in msg
+
+    def test_start_converges_duplicate_runtimes(self, monkeypatch):
+        calls = {"stop": []}
+        state = {"pids": [111, 222]}
+
+        def fake_reconcile():
+            return state["pids"]
+
+        def fake_stop(pids):
+            calls["stop"].append(list(pids))
+            state["pids"] = [111]
+            return []
+
+        monkeypatch.setattr(daemon, "_reconcile_agent_pids", fake_reconcile)
+        monkeypatch.setattr(daemon, "_stop_pids", fake_stop)
+        monkeypatch.setattr(daemon, "_write_pid", lambda pid: None)
+
+        ok, msg = daemon.start()
+
+        assert ok is True
+        assert calls["stop"] == [[222]]
+        assert "duplicate" in msg.lower()
+
+    def test_status_reports_duplicate_runtimes(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(daemon, "_reconcile_agent_pids", lambda: [111, 222])
+        monkeypatch.setattr(daemon, "LOG_FILE", str(tmp_path / "agent.log"))
+
+        running, msg = daemon.status()
+
+        assert running is True
+        assert "111" in msg
+        assert "222" in msg
+        assert "duplicate" in msg.lower()
+
+    def test_stop_uses_live_process_truth_without_pid_file(self, monkeypatch):
+        monkeypatch.setattr(daemon, "_reconcile_agent_pids", lambda: [111, 222])
+        monkeypatch.setattr(daemon, "_stop_pids", lambda pids: [])
+        monkeypatch.setattr(daemon, "_cleanup_pid", lambda: None)
+
+        ok, msg = daemon.stop()
+
+        assert ok is True
+        assert "2 runtimes" in msg
 
 
 # ---------------------------------------------------------------------------
