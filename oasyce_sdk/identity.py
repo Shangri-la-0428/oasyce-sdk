@@ -306,18 +306,23 @@ class IdentityResolver:
         binding_path = _binding_path()
         if os.path.exists(binding_path):
             local = LocalIdentityBinding.load(binding_path)
-            local.validate_signer(wallet_binding.wallet, path=binding_path)
-            return IdentityContext(
-                wallet=wallet_binding.wallet,
-                binding_source="identity_file",
-                binding_path=binding_path,
-                signer_source=wallet_binding.source,
-                signer_path=wallet_binding.path,
-                principal=principal if principal is not None else local.principal,
-                account=account if account is not None else local.account,
-                delegate=delegate if delegate is not None else local.delegate,
-                session_id=session_id,
-            )
+            try:
+                local.validate_signer(wallet_binding.wallet, path=binding_path)
+            except RuntimeError:
+                if wallet_binding.source != "explicit":
+                    raise
+            else:
+                return IdentityContext(
+                    wallet=wallet_binding.wallet,
+                    binding_source="identity_file",
+                    binding_path=binding_path,
+                    signer_source=wallet_binding.source,
+                    signer_path=wallet_binding.path,
+                    principal=principal if principal is not None else local.principal,
+                    account=account if account is not None else local.account,
+                    delegate=delegate if delegate is not None else local.delegate,
+                    session_id=session_id,
+                )
 
         return IdentityContext(
             wallet=wallet_binding.wallet,

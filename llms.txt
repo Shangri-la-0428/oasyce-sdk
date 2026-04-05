@@ -1,15 +1,35 @@
 # oasyce-sdk
 
-Python SDK for the Oasyce L1 chain — agent-native settlement infrastructure where AI agents own property, enforce contracts, and resolve disputes autonomously.
+Python runtime / bridge for the Oasyce stack. It keeps local binding above raw signer material and connects the same delegate execution context to Chain, Thronglets, and Psyche.
 
 ## Install
 
     pip install oasyce-sdk
 
+## Unified Front Door
+
+Normal user path on a new machine:
+
+    oasyce start
+
+Multi-device path:
+
+    oasyce share
+    oasyce join ~/.oasyce/oasyce-connection.json
+    oasyce status
+
+`oasyce` is only the user-facing shell. `Psyche`, `Thronglets`, and `Chain` remain independently usable.
+
 ## Quick Start
 
     from oasyce_sdk import OasyceClient
     client = OasyceClient("http://localhost:1317")
+
+For code-first signer flows:
+
+    from oasyce_sdk.crypto import Wallet
+    wallet = Wallet.create()   # first device
+    wallet = Wallet.auto()     # later runs / local reuse
 
 ## OasyceClient Methods (35 queries + 27 TX builders)
 
@@ -100,7 +120,7 @@ Python SDK for the Oasyce L1 chain — agent-native settlement infrastructure wh
 - oas_to_uoas(oas) -> int
 - uoas_to_oas(uoas) -> float
 
-## NativeSigner (v0.4.0)
+## NativeSigner
 
 Pure-Python signer — build + sign + broadcast in one call, zero Go dependency:
 
@@ -139,9 +159,14 @@ OasyceError
 - AHRP: Agent Handshake Routing Protocol — ANNOUNCE/REQUEST/OFFER/ACCEPT/DELIVER/CONFIRM
 - PoW: sha256(address_bytes || nonce_le_uint64) with leading zero bits check
 
+## Local Binding
+
+- `~/.oasyce/wallet.json` — secp256k1 signer material
+- `~/.oasyce/identity.v1.json` — local semantic binding for sdk-facing surfaces
+- `OASYCE_MNEMONIC` — explicit override for stateless / server flows
+
 ## Links
 
 - Chain: https://github.com/Shangri-la-0428/oasyce-chain
 - SDK: https://github.com/Shangri-la-0428/oasyce-sdk
-- oasyce-net (CLI + Dashboard): https://github.com/Shangri-la-0428/oasyce-net
 - Discord: https://discord.gg/tfrCn54yZW

@@ -48,7 +48,7 @@ from .types import (
     TxResult,
 )
 
-__version__ = "0.10.0"
+__version__ = "0.10.3"
 
 
 def __getattr__(name: str):

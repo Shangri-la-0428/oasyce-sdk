@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.3] - 2026-04-05
+
+- `oasyce` is now the unified front door: `start`, `share`, `join`, `status`
+- active docs now treat `oasyce` as the normal path and `oasyce-agent` as the lower-level data-agent surface
+- historical entries below may still mention older entrypoints such as `oasyce-agent start` or `thronglets setup`
+
 ## [0.10.0] - 2026-04-02
 
 ### Added

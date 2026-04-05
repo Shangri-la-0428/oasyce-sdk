@@ -7,6 +7,24 @@
 
 When a user wants to use oasyce-sdk, guide them step by step. Adapt to what they need:
 
+### Default path: "I want this machine to just work"
+
+Use the unified front door first:
+
+```bash
+pip install oasyce-sdk
+oasyce start
+```
+
+What this should do in the normal path:
+- reuse or create the local signer / binding
+- write the default agent config
+- bootstrap Thronglets
+- configure Psyche MCP surfaces
+- start the local data agent
+
+Only ask a human question when no identity exists yet: `New` or `Recover`.
+
 ### Path A: "I want chain operations in my AI tool" (MCP)
 
 **Requires Python 3.10+ (recommend 3.11+).** Check with `python3 --version`.
@@ -15,29 +33,21 @@ When a user wants to use oasyce-sdk, guide them step by step. Adapt to what they
 pip install oasyce-sdk[mcp]
 ```
 
-Then help them configure their MCP client. They need a wallet mnemonic for write operations:
-
-```python
-# Generate one for them:
-python3 -c "from oasyce_sdk.crypto import Wallet; w = Wallet.create(); print(w.mnemonic)"
-```
-
-Then add to their MCP config (Claude Code: `~/.claude/.mcp.json`, Cursor: `~/.cursor/mcp.json`):
+Then help them configure their MCP client. Prefer the local device binding first. `OASYCE_MNEMONIC` is only the explicit override for stateless / server flows:
 
 ```json
 {
   "mcpServers": {
     "oasyce": {
-      "command": "oasyce-mcp",
-      "env": {
-        "OASYCE_MNEMONIC": "<the 24 words from above>"
-      }
+      "command": "oasyce-mcp"
     }
   }
 }
 ```
 
-That's it. `OASYCE_NODE`, `OASYCE_FAUCET`, `OASYCE_CHAIN_ID` all have working defaults (oasyce-testnet-1). Read-only tools work without a mnemonic.
+If they do need explicit signer injection, use `OASYCE_MNEMONIC` on top of that config.
+
+`OASYCE_NODE`, `OASYCE_FAUCET`, `OASYCE_CHAIN_ID` all have working defaults (oasyce-testnet-1). Read-only tools work without local signer material.
 
 After configuring, tell the user to restart their AI tool for MCP to take effect.
 
@@ -45,10 +55,10 @@ After configuring, tell the user to restart their AI tool for MCP to take effect
 
 ```bash
 pip install oasyce-sdk
-oasyce-agent start
+oasyce start
 ```
 
-Auto-onboarding: creates wallet, solves PoW (~1 min), registers on chain, gets 20 OAS airdrop. Scans ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures hourly.
+This is now the normal path. `oasyce-agent` remains the lower-level data-agent surface.
 
 ### Path C: "I want to code with Sigils" (Python library)
 
@@ -71,7 +81,7 @@ Each project works independently:
 
 ```bash
 npx -y psyche-ai setup     # Psyche only — auto-configures MCP, zero config
-npx -y thronglets start  # Thronglets only — auto-detects AI tools, installs hooks
+npx -y thronglets bootstrap  # Thronglets only — adapter bootstrap
 ```
 
 No oasyce-sdk needed. No chain dependency.
@@ -85,7 +95,7 @@ No oasyce-sdk needed. No chain dependency.
 Requires Python 3.10+ (recommend 3.11+).
 
 ```bash
-pip install oasyce-sdk            # base SDK + CLI agent
+pip install oasyce-sdk            # base SDK + unified front door
 pip install oasyce-sdk[mcp]       # + MCP Server (43 tools)
 pip install oasyce-sdk[all]       # + MCP + LangChain
 ```
@@ -94,7 +104,7 @@ pip install oasyce-sdk[all]       # + MCP + LangChain
 
 | Variable | Required? | Default | Purpose |
 |----------|-----------|---------|---------|
-| `OASYCE_MNEMONIC` | For write ops | — | 24-word BIP39 mnemonic |
+| `OASYCE_MNEMONIC` | Optional override | — | Explicit signer override for stateless / server flows |
 | `OASYCE_NODE` | No | `http://47.93.32.88:1317` | Chain REST endpoint |
 | `OASYCE_FAUCET` | No | `http://47.93.32.88:8080` | Testnet faucet |
 | `OASYCE_CHAIN_ID` | No | `oasyce-testnet-1` | Chain ID |
@@ -102,9 +112,13 @@ pip install oasyce-sdk[all]       # + MCP + LangChain
 ### CLI
 
 ```bash
-oasyce-agent start    # daemon: auto wallet + PoW + Sigil + scan + register
-oasyce-agent stop     # stop daemon
-oasyce-agent status   # show wallet, assets, connectivity
+oasyce start          # normal path: local binding + Thronglets + Psyche + agent
+oasyce share          # export connection file for another device
+oasyce join <file>    # join another device from a connection file
+oasyce status         # unified local stack status
+
+oasyce-agent stop     # stop the data agent
+oasyce-agent status   # data-agent focused status
 oasyce-agent scan <path>   # one-shot file scan
 oasyce-agent privacy <path>  # PII check
 ```
@@ -150,7 +164,8 @@ Only `privacy_risk == "safe"` files auto-register. 6 PII patterns blocked: email
 
 ### Data Files
 
-- `~/.oasyce/wallet.json` — BIP39 wallet (secp256k1)
+- `~/.oasyce/wallet.json` — secp256k1 signer material
+- `~/.oasyce/identity.v1.json` — local semantic binding for sdk-facing surfaces
 - `~/.oasyce/agent.db` — SQLite (registered assets, state)
 - `~/.oasyce/agent.json` — daemon config (auto-generated)
 

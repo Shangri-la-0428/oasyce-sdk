@@ -29,18 +29,18 @@ Oasyce 链的原生代币。1 OAS = 1,000,000 uoas。所有交易以 OAS 结算�
 
 ```bash
 pip install oasyce-sdk
-oasyce-agent start
+oasyce start
 ```
 
-首次运行回答两个问题（扫描目录 + 交易风格），之后全自动：创建钱包 → 解 PoW → 链上注册 → 获得 20 OAS 空投 → 扫描文件 → 注册资产 → 发现能力 → 交易。
+正常情况下只会在**没有身份**时问一次 `New / Recover`。之后自动完成本机 binding、Thronglets bootstrap、Psyche 配置和 data agent 启动。
 
 ### 需要安装 Go / Docker / 区块链节点吗？
 
-不需要。`pip install oasyce-sdk` 就完事。纯 Python，零外部依赖。SDK 直接和公共测试网节点通信。
+不需要。`pip install oasyce-sdk && oasyce start` 就够了。纯 Python，零 Go / Docker 依赖。SDK 直接和公共测试网节点通信。
 
 ### 支持哪些平台？
 
-macOS、Linux、Windows。Python 3.9+。
+macOS、Linux、Windows。Python 3.10+。
 
 ---
 
@@ -162,12 +162,13 @@ signer.invoke_capability("CAP_000000000000000b")
 ### Agent daemon 架构？
 
 ```
-oasyce-agent start
+oasyce start
   │
-  ├─ 创建钱包（BIP39 secp256k1）
-  ├─ 解 PoW → 链上自注册 → 20 OAS 空投
+  ├─ 复用或创建本机 signer / binding
+  ├─ 接上 Thronglets + Psyche
+  ├─ 启动 oasyce-agent
   │
-  └─ 每小时循环：
+  └─ oasyce-agent 每小时循环：
       ├─ 扫描 ~/Documents, ~/Desktop, ~/Downloads, ~/Pictures
       ├─ SHA-256 哈希 + 文件分类（7 类，60+ 扩展名）
       ├─ 隐私检测（6 种 PII 模式）
@@ -177,7 +178,7 @@ oasyce-agent start
       └─ sleep → 下一轮
 ```
 
-状态持久化在 `~/.oasyce/agent.db`（SQLite）。
+状态持久化在 `~/.oasyce/agent.db`（SQLite），本机 binding 在 `~/.oasyce/identity.v1.json`。
 
 ### 链上有哪些模块？
 
@@ -203,15 +204,14 @@ oasyced start --minimum-gas-prices 0uoas
 ### 多设备怎么共享同一个账户？
 
 ```bash
-# 设备 A（已有钱包）
-cat ~/.oasyce/wallet.json  # 记下 mnemonic
+# 主设备
+oasyce share
 
-# 设备 B
-oasyce-agent join "word1 word2 ... word24"
-oasyce-agent start
+# 第二台设备
+oasyce join ~/.oasyce/oasyce-connection.json
 ```
 
-同一助记词 = 同一地址 = 同一经济身份。
+正常路径不再要求手工传播 mnemonic。连接文件路径才是默认多设备入口。
 
 ### 怎么给 AI agent 集成 Oasyce？
 
@@ -221,14 +221,13 @@ oasyce-agent start
 {
   "mcpServers": {
     "oasyce": {
-      "command": "oasyce-mcp",
-      "env": { "OASYCE_MNEMONIC": "your 24 words" }
+      "command": "oasyce-mcp"
     }
   }
 }
 ```
 
-加到 Claude Desktop / Cursor / Windsurf 配置，AI 立刻获得 28 个链上操作工具。
+本机已有 binding 时，写工具会直接复用本地 signer / binding。只有无状态或服务器场景才需要显式 `OASYCE_MNEMONIC` override。
 
 ---
 

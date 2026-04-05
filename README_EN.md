@@ -25,6 +25,35 @@ The first principle for the SDK is simple: resolve one local execution identity,
 
 The elegant progression is: standalone use first, optional binding second, optional public settlement last.
 
+## Unified Front Door
+
+If you want the whole local stack on a new machine, the default path is now:
+
+```bash
+pip install oasyce-sdk
+oasyce start
+```
+
+It tries to do the boring setup automatically:
+
+1. reuse or create the local signer / binding
+2. write a default agent config
+3. bootstrap Thronglets
+4. configure Psyche MCP surfaces
+5. start the local `oasyce-agent`
+
+In the normal path it only asks one question when no identity exists yet: `New` or `Recover`.
+
+Multi-device onboarding is collapsed to the same front door:
+
+```bash
+oasyce share
+oasyce join ~/.oasyce/oasyce-connection.json
+oasyce status
+```
+
+This is just the user-facing shell. It does not remove the independent use of `Psyche`, `Thronglets`, or `Chain`.
+
 ## Install
 
 ```bash
@@ -40,7 +69,7 @@ pip install oasyce-sdk[all]       # Everything
 
 ```bash
 pip install oasyce-sdk
-oasyce-agent start     # that's it.
+oasyce start           # dumb-proof front door
 ```
 
 What it does automatically:
@@ -53,7 +82,8 @@ What it does automatically:
 7. Repeats hourly in the background
 
 ```bash
-oasyce-agent status                # check status + registered asset count
+oasyce status                      # unified local stack status
+oasyce-agent status                # data-agent focused status
 oasyce-agent stop                  # stop daemon
 oasyce-agent scan ~/Documents      # one-shot scan (classify + privacy report)
 oasyce-agent privacy ~/secret.csv  # check single file for PII

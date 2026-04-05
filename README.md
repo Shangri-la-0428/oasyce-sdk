@@ -36,6 +36,37 @@ Runtime / body for the Oasyce stack. It resolves local identity binding and conn
 
 ---
 
+## 统一前门 / Unified Front Door
+
+如果你想在一台新电脑上把整套本地体验直接拉起，默认入口现在是：
+
+```bash
+pip install oasyce-sdk
+oasyce start
+```
+
+它会尽量自动完成：
+
+1. 复用或创建本机 signer / binding
+2. 生成默认 agent 配置
+3. 接上 Thronglets bootstrap
+4. 配置 Psyche MCP surface
+5. 启动本地 `oasyce-agent`
+
+正常情况下，只有**没有身份**时才会问一次 `New / Recover`。
+
+多设备路径也压成了同一组命令：
+
+```bash
+oasyce share
+oasyce join ~/.oasyce/oasyce-connection.json
+oasyce status
+```
+
+这只是统一前门，不改变各产品的独立性。你仍然可以单独使用 `Psyche`、`Thronglets` 或 `Chain`。
+
+---
+
 ## AI Agent 快速上手 / AI Agent Quick Start
 
 **你是 AI agent？** 按顺序执行以下代码就能操作 Oasyce 链。无需配置文件，无需人类帮忙。
@@ -229,7 +260,7 @@ Psyche / Thronglets 不可用时优雅降级。`oasyce-agent` 守护进程每次
 **MCP-native AI 工具**（Claude Code / Cursor / Codex）直接使用 Thronglets MCP 的 `substrate_query` / `trace_record`，无需 AgentRuntime。一键配置：
 
 ```bash
-thronglets setup    # 自动检测所有已安装的 AI 工具，写入 MCP 配置
+thronglets bootstrap    # 自动检测本机 AI 工具并写入适配层配置
 ```
 
 ---
@@ -241,8 +272,9 @@ thronglets setup    # 自动检测所有已安装的 AI 工具，写入 MCP 配�
 One command to auto-manage your data assets. Background daemon: scan, detect PII, hash, register on-chain.
 
 ```bash
-oasyce-agent start                 # 首次: New/Recover → 绑定本机身份；之后: 直接启动
-oasyce-agent status                # 查看运行状态 + 已注册资产数
+oasyce start                       # 默认前门：接好本地栈并启动 agent
+oasyce status                      # 统一查看本机 stack 状态
+oasyce-agent status                # 仅查看 data-agent 运行状态 + 已注册资产数
 oasyce-agent stop                  # 停止
 oasyce-agent scan ~/Documents      # 手动扫描（分类 + 隐私报告）
 oasyce-agent privacy ~/secret.csv  # 单文件 PII 检查
@@ -275,7 +307,7 @@ oasyce-agent stats                 # 资产统计
 }
 ```
 
-写工具默认复用本机 binding：`~/.oasyce/identity.v1.json` + `~/.oasyce/wallet.json`。如果你先用了 `Thronglets`，SDK 在第一次本地绑定时会可选吸收 `~/.thronglets/identity.v1.json` 里的 `owner_account` 作为 account hint。`OASYCE_MNEMONIC` 只是无状态 / 服务器场景下的显式 override。集体智能（perceive/act）用 Thronglets MCP：`thronglets setup`。
+写工具默认复用本机 binding：`~/.oasyce/identity.v1.json` + `~/.oasyce/wallet.json`。如果你先用了 `Thronglets`，SDK 在第一次本地绑定时会可选吸收 `~/.thronglets/identity.v1.json` 里的 `owner_account` 作为 account hint。`OASYCE_MNEMONIC` 只是无状态 / 服务器场景下的显式 override。集体智能（perceive/act）用 Thronglets MCP；Thronglets 的默认接入面是 `thronglets bootstrap`，也可以直接走 `oasyce start`。
 
 ---
 
