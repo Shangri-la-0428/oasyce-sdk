@@ -223,6 +223,15 @@ oasyce join ~/Desktop/oasyce-connection.json
 
 正常路径不再要求手工传播 mnemonic。`oasyce share` 默认把连接文件写到桌面；连接文件路径才是默认多设备入口。这个文件本身会声明 handoff 意图和 `preferred_surface`，所以主设备侧最自然的动作就是“生成文件并发给另一台电脑上的 AI”，而不是再手工解释安装和 join 步骤。
 
+如果用户只是把 `oasyce-sdk` 的 git 链接发给另一个 AI，也可以。正确理解应该是“仓库链接只是 locator，不是开发环境要求”。默认动作应是：
+
+```bash
+python3 -m pip install --user -U "git+https://github.com/Shangri-la-0428/oasyce-sdk.git"
+oasyce join
+```
+
+不要默认走 `git clone` + 本地源码安装，除非用户明确要调试源码。
+
 这里 `oasyce` 会优先通过 `~/.thronglets/bin/thronglets-managed` 这个 canonical 本机运行面和 Thronglets 说话。如果这层运行面过旧，前门会直接要求你先执行一次 `thronglets setup`，而不是继续悄悄沿用旧 schema。
 
 如果你把 Thronglets 数据目录放在非默认路径，再给 `oasyce` 同步导出 `THRONGLETS_DATA_DIR=/your/data/dir` 即可。

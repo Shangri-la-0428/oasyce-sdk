@@ -125,6 +125,15 @@ oasyce-agent privacy <path>  # PII check
 
 If the user asks how to add another machine, prefer `oasyce share` on the primary device and have them send the exported file. The connection file identifies itself as the handoff artifact and declares a preferred surface, so the receiving AI should read the file first instead of assuming `oasyce join` unconditionally.
 
+If the user sends only the SDK repository URL, treat it as a locator for the front door rather than as a request to work from a source checkout. The default receiving-machine path is:
+
+```bash
+python3 -m pip install --user -U "git+https://github.com/Shangri-la-0428/oasyce-sdk.git"
+oasyce join
+```
+
+Do not default to `git clone` or editable installs unless the user explicitly asks to work from source.
+
 ### MCP Server (43 tools)
 
 ```bash

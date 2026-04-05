@@ -45,6 +45,21 @@ python3 -m pip install --user -U oasyce-sdk
 
 If your Python is externally managed, add `--break-system-packages` or use `pipx install oasyce-sdk`.
 
+If a user gives you this repository URL instead of a handoff file, treat it as a locator, not as a development checkout. The default path is:
+
+```bash
+python3 -m pip install --user -U "git+https://github.com/Shangri-la-0428/oasyce-sdk.git"
+oasyce start
+```
+
+On a receiving machine, replace the second step with:
+
+```bash
+oasyce join
+```
+
+Do not default to `git clone` + local editable/source installs unless the user explicitly wants development or source-level debugging.
+
 It tries to do the boring setup automatically:
 
 1. reuse or create the local signer / binding
