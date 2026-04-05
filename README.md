@@ -69,12 +69,12 @@ python3 -m pip install --user -U oasyce-sdk
 
 ```bash
 oasyce share
-oasyce join ~/Desktop/oasyce-connection.json
+oasyce join
 oasyce status
 ```
 
-`oasyce share` 默认把连接文件写到 `~/Desktop/oasyce-connection.json`，也可以用 `--output` 覆盖。
-这个文件现在是自解释的：它会直接写明“这是一个 handoff artifact”，并声明 `preferred_surface`。在完整 Oasyce 环境里它通常会推荐 `oasyce join <connection-file>`；如果主设备只有最小 Thronglets 安装，它仍然会自然退回到 `thronglets join <connection-file>`。
+`oasyce share` 默认把连接文件写到 `~/Desktop/oasyce-connection.json`，也可以用 `--output` 覆盖。第二台电脑的正常路径就是把这个文件放到桌面，然后直接运行 `oasyce join`；只有高级场景才需要显式传路径。
+这个文件现在是自解释的：它会直接写明“这是一个 handoff artifact”，并声明 `preferred_surface`。在完整 Oasyce 环境里它通常会推荐 `oasyce join`；如果主设备只有最小 Thronglets 安装，它仍然会自然退回到 `thronglets join` 这类更轻的 surface。
 
 `oasyce` 在这里不会自己猜 Thronglets 运行面。它会优先走 Thronglets 写下来的 canonical managed runtime：
 

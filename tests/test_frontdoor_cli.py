@@ -145,6 +145,11 @@ def test_share_falls_back_to_oasyce_dir_when_desktop_missing(monkeypatch, tmp_pa
 def test_join_uses_noninteractive_identity_after_connection_join(monkeypatch, tmp_path, capsys):
     commands: list[list[str]] = []
     identity_prompts: list[bool] = []
+    monkeypatch.setenv("HOME", str(tmp_path))
+    incoming = tmp_path / "incoming"
+    incoming.mkdir()
+    handoff = incoming / "conn.json"
+    handoff.write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets"])
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
@@ -179,12 +184,67 @@ def test_join_uses_noninteractive_identity_after_connection_join(monkeypatch, tm
         "thronglets",
         "connection-join",
         "--file",
-        str(Path("~/incoming/conn.json").expanduser()),
+        str(handoff),
     ]
     assert identity_prompts == [False]
     out = capsys.readouterr().out
     assert "Agent started" in out
     assert "Chain:  ready" in out
+
+
+def test_join_uses_default_desktop_connection_path(monkeypatch, tmp_path, capsys):
+    commands: list[list[str]] = []
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    desktop = tmp_path / "Desktop"
+    desktop.mkdir()
+    handoff = desktop / "oasyce-connection.json"
+    handoff.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+    monkeypatch.setattr(frontdoor.agent_cli, "_setup_identity", lambda **kwargs: None)
+    monkeypatch.setattr(
+        frontdoor.agent_cli,
+        "_ensure_default_agent_config",
+        lambda config_path=None: str(tmp_path / "agent.json"),
+    )
+    monkeypatch.setattr(
+        frontdoor,
+        "_ensure_chain_ready",
+        lambda config_path: {
+            "address": "oasyce1joined",
+            "principal": "oasyce1owner",
+            "balance_oas": 100.0,
+        },
+    )
+    monkeypatch.setattr(frontdoor, "_bootstrap_thronglets", lambda: None)
+    monkeypatch.setattr(frontdoor, "_setup_psyche", lambda: None)
+    monkeypatch.setattr(frontdoor.daemon, "start", lambda: (True, "Agent started"))
+
+    with pytest.raises(SystemExit) as exc:
+        frontdoor.main(["join"])
+
+    assert exc.value.code == 0
+    assert commands[0] == [
+        "thronglets",
+        "connection-join",
+        "--file",
+        str(handoff),
+    ]
+    out = capsys.readouterr().out
+    assert "Agent started" in out
+
+
+def test_join_without_default_handoff_file_raises_clear_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path / ".oasyce"))
+
+    with pytest.raises(RuntimeError) as exc:
+        frontdoor.cmd_join(type("Args", (), {"file": None})())
+
+    message = str(exc.value)
+    assert "No default handoff file found." in message
+    assert "oasyce join <file>" in message
 
 
 def test_psyche_configured_targets_detect_codex_and_cursor(monkeypatch, tmp_path):

@@ -59,12 +59,12 @@ Multi-device onboarding is collapsed to the same front door:
 
 ```bash
 oasyce share
-oasyce join ~/Desktop/oasyce-connection.json
+oasyce join
 oasyce status
 ```
 
-`oasyce share` writes to `~/Desktop/oasyce-connection.json` by default. Override it with `--output` if needed.
-The exported file is now self-describing: it explicitly marks itself as a handoff artifact and declares a `preferred_surface`. In a full Oasyce setup it will usually recommend `oasyce join <connection-file>`; on a Thronglets-only source device it naturally falls back to `thronglets join <connection-file>`.
+`oasyce share` writes to `~/Desktop/oasyce-connection.json` by default. Override it with `--output` if needed. On the receiving device, the normal path is to save that file to the Desktop and run `oasyce join`; only advanced cases need an explicit path.
+The exported file is now self-describing: it explicitly marks itself as a handoff artifact and declares a `preferred_surface`. In a full Oasyce setup it will usually recommend `oasyce join`; on a Thronglets-only source device it naturally falls back to a lighter `thronglets join` surface.
 
 `oasyce` does not guess the Thronglets runtime surface here. It prefers the canonical managed runtime written by Thronglets itself:
 

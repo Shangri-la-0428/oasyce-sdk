@@ -2,11 +2,11 @@
 
 This module exposes a thin user-facing shell over independently-usable
 products. It does not replace Thronglets, Psyche, or the agent daemon; it
-just gives normal users one obvious path:
+    just gives normal users one obvious path:
 
     oasyce start
     oasyce share
-    oasyce join <file>
+    oasyce join
     oasyce status
 """
 
@@ -251,6 +251,10 @@ def _default_share_path() -> Path:
     if desktop.exists() and desktop.is_dir():
         return desktop / "oasyce-connection.json"
     return Path(daemon.OASYCE_DIR) / "oasyce-connection.json"
+
+
+def _default_join_path() -> Path:
+    return _default_share_path()
 
 
 def _load_agent_config(config_path: str) -> dict:
@@ -551,7 +555,23 @@ def cmd_share(args) -> None:
 
 
 def cmd_join(args) -> None:
-    connection_file = str(Path(args.file).expanduser())
+    connection_path = (
+        Path(args.file).expanduser() if args.file else _default_join_path()
+    )
+    if not connection_path.exists():
+        if args.file:
+            raise RuntimeError(
+                f"Connection file not found: {connection_path}. "
+                "Receive the handoff file from the primary device and retry."
+            )
+        raise RuntimeError(
+            "No default handoff file found. "
+            f"Expected: {connection_path}. "
+            "Receive the connection file from the primary device, save it there, "
+            "or pass an explicit path to `oasyce join <file>`."
+        )
+
+    connection_file = str(connection_path)
     _run_checked(
         _thronglets_command(
             _ensure_canonical_thronglets_runtime(),
@@ -624,7 +644,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_join = sub.add_parser("join", help="Join this device using a connection file")
-    p_join.add_argument("file", help="Connection file exported from a primary device")
+    p_join.add_argument(
+        "file",
+        nargs="?",
+        help=(
+            "Connection file exported from a primary device "
+            "(defaults to ~/Desktop/oasyce-connection.json)"
+        ),
+    )
 
     p_status = sub.add_parser("status", help="Show local stack status")
     p_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
@@ -650,7 +677,7 @@ def main(argv: list[str] | None = None) -> None:
     print("\nQuick start:")
     print("  oasyce start")
     print("  oasyce share")
-    print("  oasyce join ~/Desktop/oasyce-connection.json")
+    print("  oasyce join")
     print("  oasyce status")
     raise SystemExit(1)
 

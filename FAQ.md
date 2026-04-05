@@ -218,10 +218,10 @@ oasyced start --minimum-gas-prices 0uoas
 oasyce share
 
 # 第二台设备
-oasyce join ~/Desktop/oasyce-connection.json
+oasyce join
 ```
 
-正常路径不再要求手工传播 mnemonic。`oasyce share` 默认把连接文件写到桌面；连接文件路径才是默认多设备入口。这个文件本身会声明 handoff 意图和 `preferred_surface`，所以主设备侧最自然的动作就是“生成文件并发给另一台电脑上的 AI”，而不是再手工解释安装和 join 步骤。
+正常路径不再要求手工传播 mnemonic。`oasyce share` 默认把连接文件写到桌面；第二台设备默认也从桌面读这个 handoff 文件，所以正常路径只需要 `oasyce join`。这个文件本身会声明 handoff 意图和 `preferred_surface`，所以主设备侧最自然的动作就是“生成文件并发给另一台电脑上的 AI”，而不是再手工解释安装和 join 步骤。
 
 这里 `oasyce` 会优先通过 `~/.thronglets/bin/thronglets-managed` 这个 canonical 本机运行面和 Thronglets 说话。如果这层运行面过旧，前门会直接要求你先执行一次 `thronglets setup`，而不是继续悄悄沿用旧 schema。
 
