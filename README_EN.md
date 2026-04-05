@@ -64,6 +64,7 @@ oasyce status
 ```
 
 `oasyce share` writes to `~/Desktop/oasyce-connection.json` by default. Override it with `--output` if needed.
+The exported file is now self-describing: it explicitly marks itself as a handoff artifact and declares a `preferred_surface`. In a full Oasyce setup it will usually recommend `oasyce join <connection-file>`; on a Thronglets-only source device it naturally falls back to `thronglets join <connection-file>`.
 
 This is just the user-facing shell. It does not remove the independent use of `Psyche`, `Thronglets`, or `Chain`.
 

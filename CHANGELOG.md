@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.5] - 2026-04-05
+
+- `oasyce share` now exports a self-describing join handoff artifact and always includes the richer `oasyce` surface when present
+- host-side docs now tell users to generate the handoff file and send it to another AI or machine, instead of manually narrating join steps
+- receiving AIs can follow the file's declared `preferred_surface` rather than guessing whether to use `oasyce join` or `thronglets join`
+
 ## [0.10.4] - 2026-04-05
 
 - `oasyce share` now defaults to `~/Desktop/oasyce-connection.json`, with fallback to `~/.oasyce` when Desktop is unavailable

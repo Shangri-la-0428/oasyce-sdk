@@ -221,7 +221,7 @@ oasyce share
 oasyce join ~/Desktop/oasyce-connection.json
 ```
 
-正常路径不再要求手工传播 mnemonic。`oasyce share` 默认把连接文件写到桌面；连接文件路径才是默认多设备入口。
+正常路径不再要求手工传播 mnemonic。`oasyce share` 默认把连接文件写到桌面；连接文件路径才是默认多设备入口。这个文件本身会声明 handoff 意图和 `preferred_surface`，所以主设备侧最自然的动作就是“生成文件并发给另一台电脑上的 AI”，而不是再手工解释安装和 join 步骤。
 
 ### 怎么给 AI agent 集成 Oasyce？
 

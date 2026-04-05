@@ -95,6 +95,7 @@ def test_share_uses_default_connection_path(monkeypatch, tmp_path, capsys):
         str(expected),
         "--ttl-hours",
         "24",
+        "--include-oasyce-surface",
     ]]
     assert capsys.readouterr().out.strip() == str(expected)
 

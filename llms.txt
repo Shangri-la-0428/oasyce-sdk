@@ -19,6 +19,7 @@ Multi-device path:
     oasyce status
 
 `oasyce` is only the user-facing shell. `Psyche`, `Thronglets`, and `Chain` remain independently usable.
+The exported connection file is self-describing and declares a preferred join surface. In a full Oasyce setup that is usually `oasyce`; in a minimal setup it may be `thronglets`. If a user gives you a connection file directly, read the manifest from the file first and follow its preferred surface instead of re-explaining join steps manually.
 
 ## Quick Start
 

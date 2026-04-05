@@ -74,6 +74,7 @@ oasyce status
 ```
 
 `oasyce share` 默认把连接文件写到 `~/Desktop/oasyce-connection.json`，也可以用 `--output` 覆盖。
+这个文件现在是自解释的：它会直接写明“这是一个 handoff artifact”，并声明 `preferred_surface`。在完整 Oasyce 环境里它通常会推荐 `oasyce join <connection-file>`；如果主设备只有最小 Thronglets 安装，它仍然会自然退回到 `thronglets join <connection-file>`。
 
 这只是统一前门，不改变各产品的独立性。你仍然可以单独使用 `Psyche`、`Thronglets` 或 `Chain`。
 
