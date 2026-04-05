@@ -82,7 +82,7 @@ def test_share_uses_default_connection_path(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / "Desktop").mkdir()
-    monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_ensure_thronglets_surface", lambda surface: ["thronglets"])
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
 
     frontdoor.main(["share"])
@@ -100,12 +100,39 @@ def test_share_uses_default_connection_path(monkeypatch, tmp_path, capsys):
     assert capsys.readouterr().out.strip() == str(expected)
 
 
+def test_share_passes_custom_thronglets_data_dir(monkeypatch, tmp_path, capsys):
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
+    (tmp_path / "Desktop").mkdir()
+    monkeypatch.setattr(frontdoor, "_ensure_thronglets_surface", lambda surface: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+
+    frontdoor.main(["share"])
+
+    expected = tmp_path / "Desktop" / "oasyce-connection.json"
+    assert commands == [[
+        "thronglets",
+        "--data-dir",
+        str(tmp_path / "custom-thronglets"),
+        "connection-export",
+        "--output",
+        str(expected),
+        "--ttl-hours",
+        "24",
+        "--include-oasyce-surface",
+    ]]
+    assert capsys.readouterr().out.strip() == str(expected)
+
+
 def test_share_falls_back_to_oasyce_dir_when_desktop_missing(monkeypatch, tmp_path, capsys):
     commands: list[list[str]] = []
 
     monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path / ".oasyce"))
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_ensure_thronglets_surface", lambda surface: ["thronglets"])
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
 
     frontdoor.main(["share"])
@@ -119,7 +146,7 @@ def test_join_uses_noninteractive_identity_after_connection_join(monkeypatch, tm
     commands: list[list[str]] = []
     identity_prompts: list[bool] = []
 
-    monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets"])
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
     monkeypatch.setattr(
         frontdoor.agent_cli,
@@ -184,6 +211,103 @@ def test_resolve_thronglets_base_command_prefers_managed_launcher(monkeypatch, t
     assert frontdoor._resolve_thronglets_base_command() == [str(launcher)]
 
 
+def test_managed_thronglets_path_honors_env_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
+
+    assert frontdoor._managed_thronglets_path() == tmp_path / "custom-thronglets" / "bin" / "thronglets-managed"
+
+
+def test_ensure_thronglets_surface_refreshes_stale_managed_launcher(monkeypatch, tmp_path):
+    managed_path = tmp_path / ".thronglets" / "bin" / "thronglets-managed"
+    managed_path.parent.mkdir(parents=True)
+    managed_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    managed_path.chmod(0o755)
+    managed = str(managed_path)
+    fallback = ["thronglets"]
+    support_state = {
+        tuple([managed]): False,
+        tuple(fallback): True,
+    }
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: Path(managed))
+    monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [[managed], fallback])
+    monkeypatch.setattr(
+        frontdoor,
+        "_thronglets_supports_surface",
+        lambda cmd, surface: support_state.get(tuple(cmd), False),
+    )
+
+    def fake_run_checked(cmd, capture_output=False):
+        commands.append(cmd)
+        if cmd == fallback + ["setup"]:
+            support_state[(managed,)] = True
+        return ""
+
+    monkeypatch.setattr(frontdoor, "_run_checked", fake_run_checked)
+
+    assert frontdoor._ensure_thronglets_surface("oasyce") == [managed]
+    assert commands == [fallback + ["setup"]]
+
+
+def test_ensure_thronglets_surface_raises_clear_error_when_no_runtime_supports_surface(monkeypatch, tmp_path):
+    managed = str(tmp_path / ".thronglets" / "bin" / "thronglets-managed")
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: Path(managed))
+    monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: [managed])
+    monkeypatch.setattr(frontdoor, "_thronglets_supports_surface", lambda cmd, surface: False)
+    monkeypatch.setattr(frontdoor, "_refresh_managed_thronglets_surface", lambda surface: False)
+
+    with pytest.raises(RuntimeError) as exc:
+        frontdoor._ensure_thronglets_surface("oasyce")
+
+    message = str(exc.value)
+    assert "thronglets setup" in message
+    assert managed in message
+
+
+def test_run_checked_reports_command_failure_without_capture_output(monkeypatch):
+    class Proc:
+        returncode = 7
+        stderr = None
+        stdout = None
+
+    monkeypatch.setattr(frontdoor.subprocess, "run", lambda *args, **kwargs: Proc())
+
+    with pytest.raises(RuntimeError) as exc:
+        frontdoor._run_checked(["cmd", "subcmd"])
+
+    assert "cmd subcmd failed with code 7" in str(exc.value)
+
+
+def test_bootstrap_thronglets_uses_canonical_runtime(monkeypatch):
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets-managed"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+
+    frontdoor._bootstrap_thronglets()
+
+    assert commands == [["thronglets-managed", "bootstrap", "--json"]]
+
+
+def test_bootstrap_thronglets_passes_custom_data_dir(monkeypatch, tmp_path):
+    commands: list[list[str]] = []
+
+    monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
+    monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets-managed"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+
+    frontdoor._bootstrap_thronglets()
+
+    assert commands == [[
+        "thronglets-managed",
+        "--data-dir",
+        str(tmp_path / "custom-thronglets"),
+        "bootstrap",
+        "--json",
+    ]]
+
+
 def test_status_json_uses_collected_status(monkeypatch, capsys):
     payload = {"identity": {"address": "oasyce1demo"}, "agent": {"running": False}, "thronglets": {}, "psyche": {}, "paths": {}}
     monkeypatch.setattr(frontdoor, "_collect_status", lambda: payload)
@@ -191,6 +315,108 @@ def test_status_json_uses_collected_status(monkeypatch, capsys):
     frontdoor.main(["status", "--json"])
 
     assert json.loads(capsys.readouterr().out) == payload
+
+
+def test_status_report_surfaces_runtime_drift(capsys):
+    payload = {
+        "identity": {
+            "address": "oasyce1demo",
+            "account": "oasyce1demo",
+            "principal": "oasyce1demo",
+            "delegate": "oasyce1demo",
+        },
+        "agent": {"running": False, "message": "stopped"},
+        "thronglets": {
+            "data": {
+                "summary": {
+                    "status": "network-ready",
+                    "owner_account": "oasyce1demo",
+                    "device_identity": "oasyce1device",
+                }
+            }
+        },
+        "psyche": {"configured_targets": [], "entry": "missing"},
+        "paths": {
+            "thronglets_active_runtime": "thronglets",
+            "thronglets_managed_runtime": "/Users/demo/.thronglets/bin/thronglets-managed",
+        },
+    }
+
+    frontdoor._print_status_report(payload)
+
+    out = capsys.readouterr().out
+    assert "Runtime:    drifted" in out
+    assert "Active:     thronglets" in out
+    assert "Canonical:  /Users/demo/.thronglets/bin/thronglets-managed" in out
+
+
+def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher(monkeypatch, tmp_path):
+    managed_path = tmp_path / ".thronglets" / "bin" / "thronglets-managed"
+    fallback = ["thronglets"]
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: managed_path)
+    monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [fallback])
+
+    def fake_run_checked(cmd, capture_output=False):
+        commands.append(cmd)
+        if cmd == fallback + ["setup"]:
+            managed_path.parent.mkdir(parents=True)
+            managed_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            managed_path.chmod(0o755)
+        return ""
+
+    monkeypatch.setattr(frontdoor, "_run_checked", fake_run_checked)
+
+    assert frontdoor._ensure_canonical_thronglets_runtime() == [str(managed_path)]
+    assert commands == [fallback + ["setup"]]
+
+
+def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher_with_custom_data_dir(monkeypatch, tmp_path):
+    managed_path = tmp_path / "custom-thronglets" / "bin" / "thronglets-managed"
+    fallback = ["thronglets"]
+    commands: list[list[str]] = []
+
+    monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: managed_path)
+    monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [fallback])
+
+    def fake_run_checked(cmd, capture_output=False):
+        commands.append(cmd)
+        if cmd == [
+            "thronglets",
+            "--data-dir",
+            str(tmp_path / "custom-thronglets"),
+            "setup",
+        ]:
+            managed_path.parent.mkdir(parents=True)
+            managed_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            managed_path.chmod(0o755)
+        return ""
+
+    monkeypatch.setattr(frontdoor, "_run_checked", fake_run_checked)
+
+    assert frontdoor._ensure_canonical_thronglets_runtime() == [str(managed_path)]
+    assert commands == [[
+        "thronglets",
+        "--data-dir",
+        str(tmp_path / "custom-thronglets"),
+        "setup",
+    ]]
+
+
+def test_ensure_canonical_thronglets_runtime_raises_clear_error_when_unavailable(monkeypatch):
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_command", lambda: None)
+    monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [["thronglets"]])
+    monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError) as exc:
+        frontdoor._ensure_canonical_thronglets_runtime()
+
+    message = str(exc.value)
+    assert "thronglets setup" in message
+    assert "canonical Thronglets managed runtime" in message
 
 
 def test_ensure_chain_ready_self_heals_registration_balance_and_policy(monkeypatch, tmp_path):
