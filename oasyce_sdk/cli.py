@@ -382,6 +382,7 @@ def cmd_share(args) -> None:
             str(output),
             "--ttl-hours",
             str(args.ttl_hours),
+            "--include-oasyce-surface",
         ]
     )
     print(str(output))
