@@ -80,12 +80,14 @@ def test_share_uses_default_connection_path(monkeypatch, tmp_path, capsys):
     commands: list[list[str]] = []
 
     monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "Desktop").mkdir()
     monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: ["thronglets"])
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
 
     frontdoor.main(["share"])
 
-    expected = tmp_path / "oasyce-connection.json"
+    expected = tmp_path / "Desktop" / "oasyce-connection.json"
     assert commands == [[
         "thronglets",
         "connection-export",
@@ -94,6 +96,21 @@ def test_share_uses_default_connection_path(monkeypatch, tmp_path, capsys):
         "--ttl-hours",
         "24",
     ]]
+    assert capsys.readouterr().out.strip() == str(expected)
+
+
+def test_share_falls_back_to_oasyce_dir_when_desktop_missing(monkeypatch, tmp_path, capsys):
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path / ".oasyce"))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+
+    frontdoor.main(["share"])
+
+    expected = tmp_path / ".oasyce" / "oasyce-connection.json"
+    assert commands[0][3] == str(expected)
     assert capsys.readouterr().out.strip() == str(expected)
 
 

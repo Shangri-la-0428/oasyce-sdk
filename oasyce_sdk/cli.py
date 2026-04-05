@@ -106,6 +106,9 @@ def _run_json_command(cmd: list[str]) -> dict:
 
 
 def _default_share_path() -> Path:
+    desktop = _home_dir() / "Desktop"
+    if desktop.exists() and desktop.is_dir():
+        return desktop / "oasyce-connection.json"
     return Path(daemon.OASYCE_DIR) / "oasyce-connection.json"
 
 
@@ -442,7 +445,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("start", help="Set up the local stack and start the agent")
 
     p_share = sub.add_parser("share", help="Export a connection file for another device")
-    p_share.add_argument("--output", help="Where to write the connection file")
+    p_share.add_argument(
+        "--output",
+        help="Where to write the connection file (defaults to ~/Desktop/oasyce-connection.json)",
+    )
     p_share.add_argument(
         "--ttl-hours",
         type=int,
@@ -477,7 +483,7 @@ def main(argv: list[str] | None = None) -> None:
     print("\nQuick start:")
     print("  oasyce start")
     print("  oasyce share")
-    print("  oasyce join ~/.oasyce/oasyce-connection.json")
+    print("  oasyce join ~/Desktop/oasyce-connection.json")
     print("  oasyce status")
     raise SystemExit(1)
 

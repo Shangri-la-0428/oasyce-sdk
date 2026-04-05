@@ -45,6 +45,16 @@ pip install oasyce-sdk
 oasyce start
 ```
 
+如果这台机器以前装过旧的 `oasyce` / `oasyce-net` 包，而 `oasyce` 仍然报
+`ModuleNotFoundError: No module named 'oasyce'`，先清掉旧前门再重装：
+
+```bash
+python3 -m pip uninstall -y oasyce oasyce-sdk
+python3 -m pip install --user -U oasyce-sdk
+```
+
+如果你的 Python 是 externally managed，再补 `--break-system-packages`，或者改用 `pipx install oasyce-sdk`。
+
 它会尽量自动完成：
 
 1. 复用或创建本机 signer / binding
@@ -59,9 +69,11 @@ oasyce start
 
 ```bash
 oasyce share
-oasyce join ~/.oasyce/oasyce-connection.json
+oasyce join ~/Desktop/oasyce-connection.json
 oasyce status
 ```
+
+`oasyce share` 默认把连接文件写到 `~/Desktop/oasyce-connection.json`，也可以用 `--output` 覆盖。
 
 这只是统一前门，不改变各产品的独立性。你仍然可以单独使用 `Psyche`、`Thronglets` 或 `Chain`。
 

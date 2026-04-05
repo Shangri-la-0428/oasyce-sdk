@@ -17,7 +17,7 @@ oasyce start
 
 ```bash
 oasyce share
-oasyce join ~/.oasyce/oasyce-connection.json
+oasyce join ~/Desktop/oasyce-connection.json
 oasyce status
 ```
 

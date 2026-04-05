@@ -15,7 +15,7 @@ Normal user path on a new machine:
 Multi-device path:
 
     oasyce share
-    oasyce join ~/.oasyce/oasyce-connection.json
+    oasyce join ~/Desktop/oasyce-connection.json
     oasyce status
 
 `oasyce` is only the user-facing shell. `Psyche`, `Thronglets`, and `Chain` remain independently usable.

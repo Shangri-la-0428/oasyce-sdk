@@ -34,6 +34,17 @@ pip install oasyce-sdk
 oasyce start
 ```
 
+If this machine previously had the legacy `oasyce` / `oasyce-net` package and
+`oasyce` still fails with `ModuleNotFoundError: No module named 'oasyce'`,
+remove the stale front door first and reinstall:
+
+```bash
+python3 -m pip uninstall -y oasyce oasyce-sdk
+python3 -m pip install --user -U oasyce-sdk
+```
+
+If your Python is externally managed, add `--break-system-packages` or use `pipx install oasyce-sdk`.
+
 It tries to do the boring setup automatically:
 
 1. reuse or create the local signer / binding
@@ -48,9 +59,11 @@ Multi-device onboarding is collapsed to the same front door:
 
 ```bash
 oasyce share
-oasyce join ~/.oasyce/oasyce-connection.json
+oasyce join ~/Desktop/oasyce-connection.json
 oasyce status
 ```
+
+`oasyce share` writes to `~/Desktop/oasyce-connection.json` by default. Override it with `--output` if needed.
 
 This is just the user-facing shell. It does not remove the independent use of `Psyche`, `Thronglets`, or `Chain`.
 
