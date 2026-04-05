@@ -9,6 +9,7 @@ Usage::
 """
 
 import importlib
+from importlib.metadata import PackageNotFoundError, version
 
 from .client import OasyceClient
 from .errors import (
@@ -48,7 +49,14 @@ from .types import (
     TxResult,
 )
 
-__version__ = "0.10.3"
+def _package_version() -> str:
+    try:
+        return version("oasyce-sdk")
+    except PackageNotFoundError:
+        return "0.10.5"
+
+
+__version__ = _package_version()
 
 
 def __getattr__(name: str):

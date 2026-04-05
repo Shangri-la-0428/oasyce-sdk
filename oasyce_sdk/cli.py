@@ -55,17 +55,34 @@ def _dev_thronglets_bin_path() -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _resolve_thronglets_base_command() -> list[str]:
+def _available_thronglets_commands() -> list[list[str]]:
+    commands: list[list[str]] = []
     managed = _managed_thronglets_path()
     if managed.exists() and os.access(managed, os.X_OK):
-        return [str(managed)]
+        commands.append([str(managed)])
     local_dev = _dev_thronglets_bin_path()
     if local_dev and os.access(local_dev, os.X_OK):
-        return [str(local_dev)]
+        commands.append([str(local_dev)])
     if shutil.which("thronglets"):
-        return ["thronglets"]
+        commands.append(["thronglets"])
     if shutil.which("npx"):
-        return ["npx", "-y", "thronglets"]
+        commands.append(["npx", "-y", "thronglets"])
+
+    unique: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for command in commands:
+        key = tuple(command)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(command)
+    return unique
+
+
+def _resolve_thronglets_base_command() -> list[str]:
+    commands = _available_thronglets_commands()
+    if commands:
+        return commands[0]
     raise RuntimeError(
         "Thronglets is not available. Install `thronglets` or make `npx` available."
     )
@@ -93,7 +110,8 @@ def _run_checked(cmd: list[str], *, capture_output: bool = False) -> str:
         check=False,
     )
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout).strip()
+        detail_source = proc.stderr if proc.stderr is not None else proc.stdout or ""
+        detail = detail_source.strip()
         raise RuntimeError(detail or f"{' '.join(cmd)} failed with code {proc.returncode}")
     return proc.stdout if capture_output else ""
 
@@ -103,6 +121,76 @@ def _run_json_command(cmd: list[str]) -> dict:
     if not output:
         raise RuntimeError(f"{' '.join(cmd)} returned no output")
     return json.loads(output)
+
+
+def _thronglets_version_data(cmd: list[str]) -> dict:
+    try:
+        return _run_json_command(cmd + ["version", "--json"]).get("data", {})
+    except Exception:
+        return {}
+
+
+def _thronglets_supports_surface(cmd: list[str], surface: str) -> bool:
+    if surface == "thronglets":
+        return True
+
+    data = _thronglets_version_data(cmd)
+    capabilities = data.get("capabilities")
+    if isinstance(capabilities, dict):
+        supported = capabilities.get("connection_export_surfaces")
+        if isinstance(supported, list):
+            return surface in supported
+
+    try:
+        help_text = _run_checked(cmd + ["connection-export", "--help"], capture_output=True)
+    except Exception:
+        return False
+    if surface == "oasyce":
+        return "--include-oasyce-surface" in help_text
+    return False
+
+
+def _refresh_managed_thronglets_surface(surface: str) -> bool:
+    managed = _managed_thronglets_path()
+    managed_cmd = [str(managed)]
+    if not (managed.exists() and os.access(managed, os.X_OK)):
+        return False
+    if _thronglets_supports_surface(managed_cmd, surface):
+        return True
+
+    for candidate in _available_thronglets_commands():
+        if candidate == managed_cmd:
+            continue
+        if not _thronglets_supports_surface(candidate, surface):
+            continue
+        try:
+            _run_checked(candidate + ["setup"])
+        except Exception:
+            continue
+        return _thronglets_supports_surface(managed_cmd, surface)
+    return False
+
+
+def _ensure_thronglets_surface(surface: str) -> list[str]:
+    command = _resolve_thronglets_base_command()
+    if _thronglets_supports_surface(command, surface):
+        return command
+
+    if _refresh_managed_thronglets_surface(surface):
+        refreshed = _resolve_thronglets_base_command()
+        if _thronglets_supports_surface(refreshed, surface):
+            return refreshed
+
+    active_runtime = " ".join(command)
+    if surface == "oasyce":
+        raise RuntimeError(
+            "The active Thronglets runtime does not support the richer Oasyce handoff "
+            "surface yet. Refresh the canonical managed runtime with `thronglets setup` "
+            f"and retry `oasyce share`.\nActive runtime: {active_runtime}"
+        )
+    raise RuntimeError(
+        f"The active Thronglets runtime does not support surface {surface!r}: {active_runtime}"
+    )
 
 
 def _default_share_path() -> Path:
@@ -374,8 +462,9 @@ def cmd_start(args) -> None:
 def cmd_share(args) -> None:
     output = Path(args.output).expanduser() if args.output else _default_share_path()
     output.parent.mkdir(parents=True, exist_ok=True)
+    thronglets = _ensure_thronglets_surface("oasyce")
     _run_checked(
-        _resolve_thronglets_base_command()
+        thronglets
         + [
             "connection-export",
             "--output",
