@@ -113,7 +113,7 @@ pip install oasyce-sdk[all]       # + MCP + LangChain
 
 ```bash
 oasyce start          # normal path: local binding + Thronglets + Psyche + agent
-oasyce share          # export connection file to ~/Desktop/oasyce-connection.json
+oasyce share          # export connection file to ~/Desktop/oasyce-connection.json (self-describing bootstrap manifest inside)
 oasyce join <file>    # join another device from a connection file
 oasyce status         # unified local stack status
 
@@ -122,6 +122,8 @@ oasyce-agent status   # data-agent focused status
 oasyce-agent scan <path>   # one-shot file scan
 oasyce-agent privacy <path>  # PII check
 ```
+
+If the user asks how to add another machine, prefer `oasyce share` on the primary device and have them send the exported file. The connection file is self-describing and should be treated as the canonical multi-device handoff artifact.
 
 ### MCP Server (43 tools)
 

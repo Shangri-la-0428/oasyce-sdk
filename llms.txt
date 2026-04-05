@@ -19,6 +19,8 @@ Multi-device path:
     oasyce status
 
 `oasyce` is only the user-facing shell. `Psyche`, `Thronglets`, and `Chain` remain independently usable.
+The exported connection file is self-describing and already carries the bootstrap manifest for another AI to install `oasyce-sdk` and run `oasyce join <connection-file>`.
+If a user gives you a connection file directly, read the manifest from the file first and prefer it over re-explaining the join steps manually.
 
 ## Quick Start
 

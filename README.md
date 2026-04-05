@@ -74,6 +74,7 @@ oasyce status
 ```
 
 `oasyce share` 默认把连接文件写到 `~/Desktop/oasyce-connection.json`，也可以用 `--output` 覆盖。
+这个文件现在是自解释的：你把它直接发给另一台电脑上的 AI 就行，文件里已经带了安装 `oasyce-sdk` 和运行 `oasyce join <connection-file>` 的 bootstrap manifest。
 
 这只是统一前门，不改变各产品的独立性。你仍然可以单独使用 `Psyche`、`Thronglets` 或 `Chain`。
 
