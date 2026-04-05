@@ -187,6 +187,46 @@ def test_join_uses_noninteractive_identity_after_connection_join(monkeypatch, tm
     assert "Chain:  ready" in out
 
 
+def test_join_uses_default_desktop_connection_path(monkeypatch, tmp_path, capsys):
+    commands: list[list[str]] = []
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "Desktop").mkdir()
+    monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+    monkeypatch.setattr(frontdoor.agent_cli, "_setup_identity", lambda **kwargs: None)
+    monkeypatch.setattr(
+        frontdoor.agent_cli,
+        "_ensure_default_agent_config",
+        lambda config_path=None: str(tmp_path / "agent.json"),
+    )
+    monkeypatch.setattr(
+        frontdoor,
+        "_ensure_chain_ready",
+        lambda config_path: {
+            "address": "oasyce1joined",
+            "principal": "oasyce1owner",
+            "balance_oas": 100.0,
+        },
+    )
+    monkeypatch.setattr(frontdoor, "_bootstrap_thronglets", lambda: None)
+    monkeypatch.setattr(frontdoor, "_setup_psyche", lambda: None)
+    monkeypatch.setattr(frontdoor.daemon, "start", lambda: (True, "Agent started"))
+
+    with pytest.raises(SystemExit) as exc:
+        frontdoor.main(["join"])
+
+    assert exc.value.code == 0
+    assert commands[0] == [
+        "thronglets",
+        "connection-join",
+        "--file",
+        str(tmp_path / "Desktop" / "oasyce-connection.json"),
+    ]
+    out = capsys.readouterr().out
+    assert "Agent started" in out
+
+
 def test_psyche_configured_targets_detect_codex_and_cursor(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(frontdoor.shutil, "which", lambda name: "/usr/local/bin/codex" if name == "codex" else None)
@@ -440,6 +480,7 @@ def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher(monkeyp
 
     monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: managed_path)
     monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [fallback])
+    monkeypatch.setattr(frontdoor, "_thronglets_supports_identity_v2", lambda cmd: True)
 
     def fake_run_checked(cmd, capture_output=False):
         commands.append(cmd)
@@ -463,6 +504,7 @@ def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher_with_cu
     monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
     monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: managed_path)
     monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [fallback])
+    monkeypatch.setattr(frontdoor, "_thronglets_supports_identity_v2", lambda cmd: True)
 
     def fake_run_checked(cmd, capture_output=False):
         commands.append(cmd)
@@ -488,10 +530,39 @@ def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher_with_cu
     ]]
 
 
+def test_ensure_canonical_thronglets_runtime_skips_old_identity_schema_candidates(monkeypatch, tmp_path):
+    managed_path = tmp_path / ".thronglets" / "bin" / "thronglets-managed"
+    old_runtime = ["thronglets"]
+    fresh_runtime = ["npx", "-y", "thronglets"]
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: managed_path)
+    monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [old_runtime, fresh_runtime])
+    monkeypatch.setattr(
+        frontdoor,
+        "_thronglets_supports_identity_v2",
+        lambda cmd: cmd == fresh_runtime or cmd == [str(managed_path)],
+    )
+
+    def fake_run_checked(cmd, capture_output=False):
+        commands.append(cmd)
+        if cmd == fresh_runtime + ["setup"]:
+            managed_path.parent.mkdir(parents=True)
+            managed_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            managed_path.chmod(0o755)
+        return ""
+
+    monkeypatch.setattr(frontdoor, "_run_checked", fake_run_checked)
+
+    assert frontdoor._ensure_canonical_thronglets_runtime() == [str(managed_path)]
+    assert commands == [fresh_runtime + ["setup"]]
+
+
 def test_ensure_canonical_thronglets_runtime_raises_clear_error_when_unavailable(monkeypatch):
     monkeypatch.setattr(frontdoor, "_managed_thronglets_command", lambda: None)
     monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [["thronglets"]])
     monkeypatch.setattr(frontdoor, "_resolve_thronglets_base_command", lambda: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_thronglets_supports_identity_v2", lambda cmd: False)
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: (_ for _ in ()).throw(RuntimeError("boom")))
 
     with pytest.raises(RuntimeError) as exc:
@@ -500,6 +571,7 @@ def test_ensure_canonical_thronglets_runtime_raises_clear_error_when_unavailable
     message = str(exc.value)
     assert "thronglets setup" in message
     assert "canonical Thronglets managed runtime" in message
+    assert "identity.v2" in message
 
 
 def test_ensure_chain_ready_self_heals_registration_balance_and_policy(monkeypatch, tmp_path):

@@ -31,6 +31,7 @@ DEFAULT_NODE_URL = "http://47.93.32.88:1317"
 DEFAULT_CHAIN_ID = "oasyce-testnet-1"
 DEFAULT_FAUCET_URL = "http://47.93.32.88:8080"
 MIN_READY_BALANCE_UOAS = 1_000_000
+THRONGLETS_IDENTITY_SCHEMA_V2 = "thronglets.identity.v2"
 
 
 def _home_dir() -> Path:
@@ -166,6 +167,20 @@ def _thronglets_version_data(cmd: list[str]) -> dict:
         return {}
 
 
+def _thronglets_identity_schema_version(cmd: list[str]) -> str | None:
+    data = _thronglets_version_data(cmd)
+    summary = data.get("summary")
+    if isinstance(summary, dict):
+        value = summary.get("identity_schema_version")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _thronglets_supports_identity_v2(cmd: list[str]) -> bool:
+    return _thronglets_identity_schema_version(cmd) == THRONGLETS_IDENTITY_SCHEMA_V2
+
+
 def _thronglets_supports_surface(cmd: list[str], surface: str) -> bool:
     if surface == "thronglets":
         return True
@@ -237,22 +252,25 @@ def _ensure_thronglets_surface(surface: str) -> list[str]:
 
 def _ensure_canonical_thronglets_runtime() -> list[str]:
     managed = _managed_thronglets_command()
-    if managed:
+    if managed and _thronglets_supports_identity_v2(managed):
         return managed
 
     for candidate in _available_thronglets_commands():
+        if not _thronglets_supports_identity_v2(candidate):
+            continue
         try:
             _run_checked(_thronglets_command(candidate, "setup"))
         except Exception:
             continue
         managed = _managed_thronglets_command()
-        if managed:
+        if managed and _thronglets_supports_identity_v2(managed):
             return managed
 
     command = _resolve_thronglets_base_command()
     raise RuntimeError(
-        "The canonical Thronglets managed runtime is unavailable. Initialize it with "
-        f"`{' '.join(command)} setup` and retry."
+        "The canonical Thronglets managed runtime is unavailable or too old for signed "
+        "identity.v2 connection files. Initialize it with a current runtime "
+        f"(`{' '.join(command)} setup`) and retry."
     )
 
 
@@ -592,7 +610,8 @@ def cmd_share(args) -> None:
 
 
 def cmd_join(args) -> None:
-    connection_file = str(Path(args.file).expanduser())
+    raw_file = args.file or str(_default_share_path())
+    connection_file = str(Path(raw_file).expanduser())
     _run_checked(
         _thronglets_command(
             _ensure_canonical_thronglets_runtime(),
@@ -665,7 +684,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_join = sub.add_parser("join", help="Join this device using a connection file")
-    p_join.add_argument("file", help="Connection file exported from a primary device")
+    p_join.add_argument(
+        "file",
+        nargs="?",
+        help="Connection file exported from a primary device (defaults to ~/Desktop/oasyce-connection.json)",
+    )
 
     p_status = sub.add_parser("status", help="Show local stack status")
     p_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
