@@ -55,6 +55,21 @@ python3 -m pip install --user -U oasyce-sdk
 
 如果你的 Python 是 externally managed，再补 `--break-system-packages`，或者改用 `pipx install oasyce-sdk`。
 
+如果用户给你的不是 handoff 文件，而是这个仓库的 git 链接，把它当成 locator，不是开发指令。默认动作应是：
+
+```bash
+python3 -m pip install --user -U "git+https://github.com/Shangri-la-0428/oasyce-sdk.git"
+oasyce start
+```
+
+如果这是接收另一台设备的机器，把第二步换成：
+
+```bash
+oasyce join
+```
+
+不要默认走 `git clone` + 本地源码安装，除非用户明确要做开发或调试源码。
+
 它会尽量自动完成：
 
 1. 复用或创建本机 signer / binding

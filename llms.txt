@@ -21,6 +21,17 @@ Multi-device path:
 `oasyce` is only the user-facing shell. `Psyche`, `Thronglets`, and `Chain` remain independently usable.
 The exported connection file is self-describing and declares a preferred join surface. In a full Oasyce setup that is usually `oasyce`; in a minimal setup it may be `thronglets`. If a user gives you a connection file directly, read the manifest from the file first and follow its preferred surface instead of re-explaining join steps manually.
 
+If a user gives you only the repository URL for this SDK, treat that URL as a locator, not as a request for a source checkout. The default path is:
+
+    python3 -m pip install --user -U "git+https://github.com/Shangri-la-0428/oasyce-sdk.git"
+    oasyce start
+
+On a receiving machine, replace the second line with:
+
+    oasyce join
+
+Do not default to `git clone` + editable/source installs unless the user explicitly wants development or source-level debugging.
+
 ## Quick Start
 
     from oasyce_sdk import OasyceClient
