@@ -100,6 +100,33 @@ def test_share_uses_default_connection_path(monkeypatch, tmp_path, capsys):
     assert capsys.readouterr().out.strip() == str(expected)
 
 
+def test_share_passes_custom_thronglets_data_dir(monkeypatch, tmp_path, capsys):
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
+    (tmp_path / "Desktop").mkdir()
+    monkeypatch.setattr(frontdoor, "_ensure_thronglets_surface", lambda surface: ["thronglets"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+
+    frontdoor.main(["share"])
+
+    expected = tmp_path / "Desktop" / "oasyce-connection.json"
+    assert commands == [[
+        "thronglets",
+        "--data-dir",
+        str(tmp_path / "custom-thronglets"),
+        "connection-export",
+        "--output",
+        str(expected),
+        "--ttl-hours",
+        "24",
+        "--include-oasyce-surface",
+    ]]
+    assert capsys.readouterr().out.strip() == str(expected)
+
+
 def test_share_falls_back_to_oasyce_dir_when_desktop_missing(monkeypatch, tmp_path, capsys):
     commands: list[list[str]] = []
 
@@ -263,6 +290,24 @@ def test_bootstrap_thronglets_uses_canonical_runtime(monkeypatch):
     assert commands == [["thronglets-managed", "bootstrap", "--json"]]
 
 
+def test_bootstrap_thronglets_passes_custom_data_dir(monkeypatch, tmp_path):
+    commands: list[list[str]] = []
+
+    monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
+    monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets-managed"])
+    monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+
+    frontdoor._bootstrap_thronglets()
+
+    assert commands == [[
+        "thronglets-managed",
+        "--data-dir",
+        str(tmp_path / "custom-thronglets"),
+        "bootstrap",
+        "--json",
+    ]]
+
+
 def test_status_json_uses_collected_status(monkeypatch, capsys):
     payload = {"identity": {"address": "oasyce1demo"}, "agent": {"running": False}, "thronglets": {}, "psyche": {}, "paths": {}}
     monkeypatch.setattr(frontdoor, "_collect_status", lambda: payload)
@@ -325,6 +370,39 @@ def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher(monkeyp
 
     assert frontdoor._ensure_canonical_thronglets_runtime() == [str(managed_path)]
     assert commands == [fallback + ["setup"]]
+
+
+def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher_with_custom_data_dir(monkeypatch, tmp_path):
+    managed_path = tmp_path / "custom-thronglets" / "bin" / "thronglets-managed"
+    fallback = ["thronglets"]
+    commands: list[list[str]] = []
+
+    monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: managed_path)
+    monkeypatch.setattr(frontdoor, "_available_thronglets_commands", lambda: [fallback])
+
+    def fake_run_checked(cmd, capture_output=False):
+        commands.append(cmd)
+        if cmd == [
+            "thronglets",
+            "--data-dir",
+            str(tmp_path / "custom-thronglets"),
+            "setup",
+        ]:
+            managed_path.parent.mkdir(parents=True)
+            managed_path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            managed_path.chmod(0o755)
+        return ""
+
+    monkeypatch.setattr(frontdoor, "_run_checked", fake_run_checked)
+
+    assert frontdoor._ensure_canonical_thronglets_runtime() == [str(managed_path)]
+    assert commands == [[
+        "thronglets",
+        "--data-dir",
+        str(tmp_path / "custom-thronglets"),
+        "setup",
+    ]]
 
 
 def test_ensure_canonical_thronglets_runtime_raises_clear_error_when_unavailable(monkeypatch):

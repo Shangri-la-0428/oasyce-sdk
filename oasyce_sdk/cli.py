@@ -102,6 +102,18 @@ def _managed_thronglets_command() -> list[str] | None:
     return None
 
 
+def _thronglets_global_args() -> list[str]:
+    data_dir = _thronglets_data_dir()
+    default_dir = _home_dir() / ".thronglets"
+    if data_dir == default_dir:
+        return []
+    return ["--data-dir", str(data_dir)]
+
+
+def _thronglets_command(base: list[str], *args: str) -> list[str]:
+    return [*base, *_thronglets_global_args(), *args]
+
+
 def _resolve_psyche_base_command() -> list[str]:
     if shutil.which("psyche-ai"):
         return ["psyche-ai"]
@@ -139,7 +151,7 @@ def _run_json_command(cmd: list[str]) -> dict:
 
 def _thronglets_version_data(cmd: list[str]) -> dict:
     try:
-        return _run_json_command(cmd + ["version", "--json"]).get("data", {})
+        return _run_json_command(_thronglets_command(cmd, "version", "--json")).get("data", {})
     except Exception:
         return {}
 
@@ -156,7 +168,10 @@ def _thronglets_supports_surface(cmd: list[str], surface: str) -> bool:
             return surface in supported
 
     try:
-        help_text = _run_checked(cmd + ["connection-export", "--help"], capture_output=True)
+        help_text = _run_checked(
+            _thronglets_command(cmd, "connection-export", "--help"),
+            capture_output=True,
+        )
     except Exception:
         return False
     if surface == "oasyce":
@@ -177,7 +192,7 @@ def _refresh_managed_thronglets_surface(surface: str) -> bool:
         if not _thronglets_supports_surface(candidate, surface):
             continue
         try:
-            _run_checked(candidate + ["setup"])
+            _run_checked(_thronglets_command(candidate, "setup"))
         except Exception:
             continue
         refreshed = _managed_thronglets_command()
@@ -217,7 +232,7 @@ def _ensure_canonical_thronglets_runtime() -> list[str]:
 
     for candidate in _available_thronglets_commands():
         try:
-            _run_checked(candidate + ["setup"])
+            _run_checked(_thronglets_command(candidate, "setup"))
         except Exception:
             continue
         managed = _managed_thronglets_command()
@@ -380,11 +395,12 @@ def _collect_status() -> dict:
     agent_running, agent_message = daemon.status()
 
     try:
-        thronglets = _run_json_command(_resolve_thronglets_base_command() + ["status", "--json"])
+        base = _resolve_thronglets_base_command()
+        thronglets = _run_json_command(_thronglets_command(base, "status", "--json"))
     except Exception as exc:
         thronglets = {"status": "unavailable", "error": str(exc)}
     try:
-        active_runtime = " ".join(_resolve_thronglets_base_command())
+        active_runtime = " ".join(_thronglets_command(_resolve_thronglets_base_command()))
     except Exception:
         active_runtime = None
 
@@ -470,7 +486,10 @@ def _best_effort(label: str, func, issues: list[str]) -> bool:
 
 
 def _bootstrap_thronglets() -> None:
-    _run_checked(_ensure_canonical_thronglets_runtime() + ["bootstrap", "--json"], capture_output=True)
+    _run_checked(
+        _thronglets_command(_ensure_canonical_thronglets_runtime(), "bootstrap", "--json"),
+        capture_output=True,
+    )
 
 
 def _setup_psyche() -> None:
@@ -518,15 +537,15 @@ def cmd_share(args) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     thronglets = _ensure_thronglets_surface("oasyce")
     _run_checked(
-        thronglets
-        + [
+        _thronglets_command(
+            thronglets,
             "connection-export",
             "--output",
             str(output),
             "--ttl-hours",
             str(args.ttl_hours),
             "--include-oasyce-surface",
-        ]
+        )
     )
     print(str(output))
 
@@ -534,8 +553,12 @@ def cmd_share(args) -> None:
 def cmd_join(args) -> None:
     connection_file = str(Path(args.file).expanduser())
     _run_checked(
-        _ensure_canonical_thronglets_runtime()
-        + ["connection-join", "--file", connection_file]
+        _thronglets_command(
+            _ensure_canonical_thronglets_runtime(),
+            "connection-join",
+            "--file",
+            connection_file,
+        )
     )
 
     agent_cli._setup_identity(prompt_if_missing=False)
