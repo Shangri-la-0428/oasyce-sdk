@@ -123,7 +123,7 @@ oasyce-agent scan <path>   # one-shot file scan
 oasyce-agent privacy <path>  # PII check
 ```
 
-If the user asks how to add another machine, prefer `oasyce share` on the primary device and have them send the exported file. The connection file is self-describing and should be treated as the canonical multi-device handoff artifact.
+If the user asks how to add another machine, prefer `oasyce share` on the primary device and have them send the exported file. The connection file explicitly identifies itself as the canonical handoff artifact for joining another AI or machine to the same Oasyce environment.
 
 ### MCP Server (43 tools)
 

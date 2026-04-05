@@ -64,7 +64,7 @@ oasyce status
 ```
 
 `oasyce share` writes to `~/Desktop/oasyce-connection.json` by default. Override it with `--output` if needed.
-The exported file is now self-describing: you can hand it directly to another AI on another machine, and it already contains the bootstrap manifest for installing `oasyce-sdk` and running `oasyce join <connection-file>`.
+The exported file is now self-describing: it explicitly says that it is a handoff artifact for joining another AI or machine to the existing Oasyce environment, and it already carries the bootstrap manifest for installing `oasyce-sdk` and running `oasyce join <connection-file>`.
 
 This is just the user-facing shell. It does not remove the independent use of `Psyche`, `Thronglets`, or `Chain`.
 
