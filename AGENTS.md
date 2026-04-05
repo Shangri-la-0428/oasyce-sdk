@@ -113,7 +113,7 @@ pip install oasyce-sdk[all]       # + MCP + LangChain
 
 ```bash
 oasyce start          # normal path: local binding + Thronglets + Psyche + agent
-oasyce share          # export connection file for another device
+oasyce share          # export connection file to ~/Desktop/oasyce-connection.json
 oasyce join <file>    # join another device from a connection file
 oasyce status         # unified local stack status
 

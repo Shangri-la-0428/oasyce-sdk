@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.4] - 2026-04-05
+
+- `oasyce share` now defaults to `~/Desktop/oasyce-connection.json`, with fallback to `~/.oasyce` when Desktop is unavailable
+- front-door docs and examples now use the Desktop connection-file path for the normal multi-device flow
+- documented the clean migration path from the legacy `oasyce` / `oasyce-net` package so stale console scripts stop shadowing the new `oasyce_sdk` front door
+
 ## [0.10.3] - 2026-04-05
 
 - `oasyce` is now the unified front door: `start`, `share`, `join`, `status`

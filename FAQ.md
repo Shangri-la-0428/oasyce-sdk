@@ -34,6 +34,16 @@ oasyce start
 
 正常情况下只会在**没有身份**时问一次 `New / Recover`。之后自动完成本机 binding、Thronglets bootstrap、Psyche 配置和 data agent 启动。
 
+如果你以前装过旧的 `oasyce` / `oasyce-net` 包，而 `oasyce` 仍然报
+`ModuleNotFoundError: No module named 'oasyce'`，说明旧前门还占着命令名：
+
+```bash
+python3 -m pip uninstall -y oasyce oasyce-sdk
+python3 -m pip install --user -U oasyce-sdk
+```
+
+如果你的 Python 是 externally managed，再补 `--break-system-packages`，或者改用 `pipx install oasyce-sdk`。
+
 ### 需要安装 Go / Docker / 区块链节点吗？
 
 不需要。`pip install oasyce-sdk && oasyce start` 就够了。纯 Python，零 Go / Docker 依赖。SDK 直接和公共测试网节点通信。
@@ -208,10 +218,10 @@ oasyced start --minimum-gas-prices 0uoas
 oasyce share
 
 # 第二台设备
-oasyce join ~/.oasyce/oasyce-connection.json
+oasyce join ~/Desktop/oasyce-connection.json
 ```
 
-正常路径不再要求手工传播 mnemonic。连接文件路径才是默认多设备入口。
+正常路径不再要求手工传播 mnemonic。`oasyce share` 默认把连接文件写到桌面；连接文件路径才是默认多设备入口。
 
 ### 怎么给 AI agent 集成 Oasyce？
 
