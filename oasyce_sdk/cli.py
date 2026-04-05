@@ -41,6 +41,15 @@ def _workspace_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _allow_dev_runtime_fallback() -> bool:
+    return os.environ.get("OASYCE_ALLOW_DEV_RUNTIME", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _thronglets_data_dir() -> Path:
     raw = os.environ.get("THRONGLETS_DATA_DIR")
     if raw:
@@ -67,13 +76,14 @@ def _available_thronglets_commands() -> list[list[str]]:
     managed = _managed_thronglets_path()
     if managed.exists() and os.access(managed, os.X_OK):
         commands.append([str(managed)])
-    local_dev = _dev_thronglets_bin_path()
-    if local_dev and os.access(local_dev, os.X_OK):
-        commands.append([str(local_dev)])
     if shutil.which("thronglets"):
         commands.append(["thronglets"])
     if shutil.which("npx"):
         commands.append(["npx", "-y", "thronglets"])
+    if _allow_dev_runtime_fallback():
+        local_dev = _dev_thronglets_bin_path()
+        if local_dev and os.access(local_dev, os.X_OK):
+            commands.append([str(local_dev)])
 
     unique: list[list[str]] = []
     seen: set[tuple[str, ...]] = set()
@@ -119,12 +129,12 @@ def _resolve_psyche_base_command() -> list[str]:
         return ["psyche-ai"]
     if shutil.which("npx"):
         return ["npx", "-y", "psyche-ai"]
-    local_cli = _dev_psyche_cli_path()
-    if local_cli and shutil.which("node"):
-        return ["node", str(local_cli)]
+    if _allow_dev_runtime_fallback():
+        local_cli = _dev_psyche_cli_path()
+        if local_cli and shutil.which("node"):
+            return ["node", str(local_cli)]
     raise RuntimeError(
-        "Psyche is not available. Install `psyche-ai`, make `npx` available, "
-        "or keep a local oasyce_psyche checkout with `node`."
+        "Psyche is not available. Install `psyche-ai` or make `npx` available."
     )
 
 
@@ -380,7 +390,7 @@ def _psyche_entry_mode() -> str:
         return "installed"
     if shutil.which("npx"):
         return "npx"
-    if _dev_psyche_cli_path() and shutil.which("node"):
+    if _allow_dev_runtime_fallback() and _dev_psyche_cli_path() and shutil.which("node"):
         return "local_repo"
     return "missing"
 

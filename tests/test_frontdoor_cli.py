@@ -211,6 +211,34 @@ def test_resolve_thronglets_base_command_prefers_managed_launcher(monkeypatch, t
     assert frontdoor._resolve_thronglets_base_command() == [str(launcher)]
 
 
+def test_available_thronglets_commands_excludes_local_dev_runtime_by_default(monkeypatch, tmp_path):
+    dev_bin = tmp_path / "Thronglets" / "target" / "debug" / "thronglets"
+    dev_bin.parent.mkdir(parents=True)
+    dev_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    dev_bin.chmod(0o755)
+
+    monkeypatch.delenv("OASYCE_ALLOW_DEV_RUNTIME", raising=False)
+    monkeypatch.setattr(frontdoor, "_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: None)
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: tmp_path / "missing-managed")
+
+    assert frontdoor._available_thronglets_commands() == []
+
+
+def test_available_thronglets_commands_includes_local_dev_runtime_when_opted_in(monkeypatch, tmp_path):
+    dev_bin = tmp_path / "Thronglets" / "target" / "debug" / "thronglets"
+    dev_bin.parent.mkdir(parents=True)
+    dev_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    dev_bin.chmod(0o755)
+
+    monkeypatch.setenv("OASYCE_ALLOW_DEV_RUNTIME", "1")
+    monkeypatch.setattr(frontdoor, "_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: None)
+    monkeypatch.setattr(frontdoor, "_managed_thronglets_path", lambda: tmp_path / "missing-managed")
+
+    assert frontdoor._available_thronglets_commands() == [[str(dev_bin)]]
+
+
 def test_managed_thronglets_path_honors_env_override(monkeypatch, tmp_path):
     monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
 
@@ -248,6 +276,38 @@ def test_ensure_thronglets_surface_refreshes_stale_managed_launcher(monkeypatch,
 
     assert frontdoor._ensure_thronglets_surface("oasyce") == [managed]
     assert commands == [fallback + ["setup"]]
+
+
+def test_resolve_psyche_base_command_requires_installed_surface_by_default(monkeypatch, tmp_path):
+    dev_cli = tmp_path / "oasyce_psyche" / "dist" / "cli.js"
+    dev_cli.parent.mkdir(parents=True)
+    dev_cli.write_text("console.log('psyche');", encoding="utf-8")
+
+    monkeypatch.delenv("OASYCE_ALLOW_DEV_RUNTIME", raising=False)
+    monkeypatch.setattr(frontdoor, "_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: None)
+
+    with pytest.raises(RuntimeError) as exc:
+        frontdoor._resolve_psyche_base_command()
+
+    assert "Install `psyche-ai`" in str(exc.value)
+    assert "local oasyce_psyche checkout" not in str(exc.value)
+
+
+def test_resolve_psyche_base_command_allows_local_dev_surface_when_opted_in(monkeypatch, tmp_path):
+    dev_cli = tmp_path / "oasyce_psyche" / "dist" / "cli.js"
+    dev_cli.parent.mkdir(parents=True)
+    dev_cli.write_text("console.log('psyche');", encoding="utf-8")
+
+    monkeypatch.setenv("OASYCE_ALLOW_DEV_RUNTIME", "1")
+    monkeypatch.setattr(frontdoor, "_workspace_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        frontdoor.shutil,
+        "which",
+        lambda name: "/usr/bin/node" if name == "node" else None,
+    )
+
+    assert frontdoor._resolve_psyche_base_command() == ["node", str(dev_cli)]
 
 
 def test_ensure_thronglets_surface_raises_clear_error_when_no_runtime_supports_surface(monkeypatch, tmp_path):
