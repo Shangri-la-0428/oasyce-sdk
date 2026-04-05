@@ -9,7 +9,9 @@ Usage::
 """
 
 import importlib
+import re
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 from .client import OasyceClient
 from .errors import (
@@ -53,7 +55,16 @@ def _package_version() -> str:
     try:
         return version("oasyce-sdk")
     except PackageNotFoundError:
-        return "0.10.5"
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        if pyproject.exists():
+            match = re.search(
+                r'^version\s*=\s*"([^"]+)"',
+                pyproject.read_text(encoding="utf-8"),
+                re.MULTILINE,
+            )
+            if match:
+                return match.group(1)
+        return "0+unknown"
 
 
 __version__ = _package_version()

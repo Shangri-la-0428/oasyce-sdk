@@ -41,13 +41,20 @@ def _workspace_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _thronglets_data_dir() -> Path:
+    raw = os.environ.get("THRONGLETS_DATA_DIR")
+    if raw:
+        return Path(raw).expanduser()
+    return _home_dir() / ".thronglets"
+
+
 def _dev_psyche_cli_path() -> Path | None:
     candidate = _workspace_root() / "oasyce_psyche" / "dist" / "cli.js"
     return candidate if candidate.exists() else None
 
 
 def _managed_thronglets_path() -> Path:
-    return _home_dir() / ".thronglets" / "bin" / "thronglets-managed"
+    return _thronglets_data_dir() / "bin" / "thronglets-managed"
 
 
 def _dev_thronglets_bin_path() -> Path | None:
@@ -86,6 +93,13 @@ def _resolve_thronglets_base_command() -> list[str]:
     raise RuntimeError(
         "Thronglets is not available. Install `thronglets` or make `npx` available."
     )
+
+
+def _managed_thronglets_command() -> list[str] | None:
+    managed = _managed_thronglets_path()
+    if managed.exists() and os.access(managed, os.X_OK):
+        return [str(managed)]
+    return None
 
 
 def _resolve_psyche_base_command() -> list[str]:
@@ -151,12 +165,11 @@ def _thronglets_supports_surface(cmd: list[str], surface: str) -> bool:
 
 
 def _refresh_managed_thronglets_surface(surface: str) -> bool:
-    managed = _managed_thronglets_path()
-    managed_cmd = [str(managed)]
-    if not (managed.exists() and os.access(managed, os.X_OK)):
-        return False
-    if _thronglets_supports_surface(managed_cmd, surface):
+    managed_cmd = _managed_thronglets_command()
+    if managed_cmd and _thronglets_supports_surface(managed_cmd, surface):
         return True
+    if managed_cmd is None:
+        managed_cmd = [str(_managed_thronglets_path())]
 
     for candidate in _available_thronglets_commands():
         if candidate == managed_cmd:
@@ -167,29 +180,54 @@ def _refresh_managed_thronglets_surface(surface: str) -> bool:
             _run_checked(candidate + ["setup"])
         except Exception:
             continue
-        return _thronglets_supports_surface(managed_cmd, surface)
+        refreshed = _managed_thronglets_command()
+        if refreshed and _thronglets_supports_surface(refreshed, surface):
+            return True
     return False
 
 
 def _ensure_thronglets_surface(surface: str) -> list[str]:
-    command = _resolve_thronglets_base_command()
-    if _thronglets_supports_surface(command, surface):
-        return command
+    managed = _managed_thronglets_command()
+    if managed and _thronglets_supports_surface(managed, surface):
+        return managed
 
     if _refresh_managed_thronglets_surface(surface):
-        refreshed = _resolve_thronglets_base_command()
-        if _thronglets_supports_surface(refreshed, surface):
+        refreshed = _managed_thronglets_command()
+        if refreshed and _thronglets_supports_surface(refreshed, surface):
             return refreshed
 
+    command = _resolve_thronglets_base_command()
     active_runtime = " ".join(command)
     if surface == "oasyce":
         raise RuntimeError(
-            "The active Thronglets runtime does not support the richer Oasyce handoff "
-            "surface yet. Refresh the canonical managed runtime with `thronglets setup` "
+            "The canonical Thronglets managed runtime does not support the richer Oasyce "
+            "handoff surface yet. Refresh it with `thronglets setup` "
             f"and retry `oasyce share`.\nActive runtime: {active_runtime}"
         )
     raise RuntimeError(
-        f"The active Thronglets runtime does not support surface {surface!r}: {active_runtime}"
+        "The canonical Thronglets managed runtime is unavailable or incompatible. "
+        f"Refresh it with `thronglets setup`.\nActive runtime: {active_runtime}"
+    )
+
+
+def _ensure_canonical_thronglets_runtime() -> list[str]:
+    managed = _managed_thronglets_command()
+    if managed:
+        return managed
+
+    for candidate in _available_thronglets_commands():
+        try:
+            _run_checked(candidate + ["setup"])
+        except Exception:
+            continue
+        managed = _managed_thronglets_command()
+        if managed:
+            return managed
+
+    command = _resolve_thronglets_base_command()
+    raise RuntimeError(
+        "The canonical Thronglets managed runtime is unavailable. Initialize it with "
+        f"`{' '.join(command)} setup` and retry."
     )
 
 
@@ -345,6 +383,10 @@ def _collect_status() -> dict:
         thronglets = _run_json_command(_resolve_thronglets_base_command() + ["status", "--json"])
     except Exception as exc:
         thronglets = {"status": "unavailable", "error": str(exc)}
+    try:
+        active_runtime = " ".join(_resolve_thronglets_base_command())
+    except Exception:
+        active_runtime = None
 
     psyche_targets = _psyche_configured_targets()
     psyche = {
@@ -364,6 +406,8 @@ def _collect_status() -> dict:
         "paths": {
             "oasyce_dir": daemon.OASYCE_DIR,
             "agent_log": daemon.LOG_FILE,
+            "thronglets_managed_runtime": str(_managed_thronglets_path()),
+            "thronglets_active_runtime": active_runtime,
         },
     }
 
@@ -373,6 +417,7 @@ def _print_status_report(status: dict) -> None:
     agent = status["agent"]
     thronglets = status["thronglets"]
     psyche = status["psyche"]
+    paths = status["paths"]
 
     print("Oasyce status\n")
 
@@ -400,6 +445,15 @@ def _print_status_report(status: dict) -> None:
         device_identity = summary.get("device_identity")
         if device_identity:
             print(f"Device:     {device_identity}")
+        active_runtime = paths.get("thronglets_active_runtime")
+        managed_runtime = paths.get("thronglets_managed_runtime")
+        if active_runtime and managed_runtime:
+            if active_runtime == managed_runtime:
+                print("Runtime:    canonical")
+            else:
+                print("Runtime:    drifted")
+                print(f"Active:     {active_runtime}")
+                print(f"Canonical:  {managed_runtime}")
 
     targets = psyche["configured_targets"]
     target_summary = ", ".join(targets) if targets else "not configured"
@@ -416,7 +470,7 @@ def _best_effort(label: str, func, issues: list[str]) -> bool:
 
 
 def _bootstrap_thronglets() -> None:
-    _run_checked(_resolve_thronglets_base_command() + ["bootstrap", "--json"], capture_output=True)
+    _run_checked(_ensure_canonical_thronglets_runtime() + ["bootstrap", "--json"], capture_output=True)
 
 
 def _setup_psyche() -> None:
@@ -480,7 +534,7 @@ def cmd_share(args) -> None:
 def cmd_join(args) -> None:
     connection_file = str(Path(args.file).expanduser())
     _run_checked(
-        _resolve_thronglets_base_command()
+        _ensure_canonical_thronglets_runtime()
         + ["connection-join", "--file", connection_file]
     )
 

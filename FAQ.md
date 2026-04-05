@@ -225,6 +225,8 @@ oasyce join ~/Desktop/oasyce-connection.json
 
 这里 `oasyce` 会优先通过 `~/.thronglets/bin/thronglets-managed` 这个 canonical 本机运行面和 Thronglets 说话。如果这层运行面过旧，前门会直接要求你先执行一次 `thronglets setup`，而不是继续悄悄沿用旧 schema。
 
+如果你把 Thronglets 数据目录放在非默认路径，再给 `oasyce` 同步导出 `THRONGLETS_DATA_DIR=/your/data/dir` 即可。
+
 ### 怎么给 AI agent 集成 Oasyce？
 
 最简路径：MCP Server。

@@ -78,6 +78,12 @@ If that runtime is stale, `oasyce share` now fails clearly instead of silently s
 thronglets setup
 ```
 
+If you intentionally keep Thronglets data under a non-default root, export this first:
+
+```bash
+export THRONGLETS_DATA_DIR=/path/to/thronglets-data
+```
+
 This is just the user-facing shell. It does not remove the independent use of `Psyche`, `Thronglets`, or `Chain`.
 
 ## Install

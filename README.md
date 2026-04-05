@@ -88,6 +88,12 @@ oasyce status
 thronglets setup
 ```
 
+如果你刻意把 Thronglets 数据目录放在非默认位置，再额外导出：
+
+```bash
+export THRONGLETS_DATA_DIR=/path/to/thronglets-data
+```
+
 这只是统一前门，不改变各产品的独立性。你仍然可以单独使用 `Psyche`、`Thronglets` 或 `Chain`。
 
 ---
