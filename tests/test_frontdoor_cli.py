@@ -189,6 +189,12 @@ def test_join_uses_noninteractive_identity_after_connection_join(monkeypatch, tm
 
 def test_psyche_configured_targets_detect_codex_and_cursor(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: "/usr/local/bin/codex" if name == "codex" else None)
+    monkeypatch.setattr(
+        frontdoor.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Proc", (), {"returncode": 0, "stdout": "codex-cli 0.1", "stderr": ""})(),
+    )
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir(parents=True)
     (codex_dir / "config.toml").write_text('[mcp_servers.psyche]\ncommand = "npx"\n')
@@ -198,6 +204,23 @@ def test_psyche_configured_targets_detect_codex_and_cursor(monkeypatch, tmp_path
     (cursor_dir / "mcp.json").write_text(json.dumps({"mcpServers": {"psyche": {"command": "npx"}}}))
 
     assert frontdoor._psyche_configured_targets() == ["Codex", "Cursor"]
+    assert frontdoor._psyche_broken_targets() == []
+
+
+def test_psyche_broken_targets_detects_unloadable_codex_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: "/usr/local/bin/codex" if name == "codex" else None)
+    monkeypatch.setattr(
+        frontdoor.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Proc", (), {"returncode": 1, "stdout": "", "stderr": "config error"})(),
+    )
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True)
+    (codex_dir / "config.toml").write_text('[mcp_servers.psyche]\ncommand = "npx"\n')
+
+    assert frontdoor._psyche_configured_targets() == []
+    assert frontdoor._psyche_broken_targets() == ["Codex"]
 
 
 def test_resolve_thronglets_base_command_prefers_managed_launcher(monkeypatch, tmp_path):

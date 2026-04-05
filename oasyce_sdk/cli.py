@@ -363,7 +363,7 @@ def _psyche_configured_targets() -> list[str]:
     codex = _home_dir() / ".codex" / "config.toml"
     if codex.exists():
         text = codex.read_text(encoding="utf-8")
-        if "[mcp_servers.psyche]" in text:
+        if "[mcp_servers.psyche]" in text and _codex_config_loadable():
             targets.append("Codex")
 
     json_targets = [
@@ -383,6 +383,29 @@ def _psyche_configured_targets() -> list[str]:
             targets.append(name)
 
     return targets
+
+
+def _psyche_broken_targets() -> list[str]:
+    targets: list[str] = []
+    codex = _home_dir() / ".codex" / "config.toml"
+    if codex.exists():
+        text = codex.read_text(encoding="utf-8")
+        if "[mcp_servers.psyche]" in text and not _codex_config_loadable():
+            targets.append("Codex")
+    return targets
+
+
+def _codex_config_loadable() -> bool:
+    if not shutil.which("codex"):
+        return False
+    proc = subprocess.run(
+        ["codex", "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    return proc.returncode == 0
 
 
 def _psyche_entry_mode() -> str:
@@ -415,9 +438,11 @@ def _collect_status() -> dict:
         active_runtime = None
 
     psyche_targets = _psyche_configured_targets()
+    psyche_broken_targets = _psyche_broken_targets()
     psyche = {
         "entry": _psyche_entry_mode(),
         "configured_targets": psyche_targets,
+        "broken_targets": psyche_broken_targets,
         "configured": bool(psyche_targets),
     }
 
@@ -482,7 +507,13 @@ def _print_status_report(status: dict) -> None:
                 print(f"Canonical:  {managed_runtime}")
 
     targets = psyche["configured_targets"]
-    target_summary = ", ".join(targets) if targets else "not configured"
+    broken_targets = psyche.get("broken_targets", [])
+    if targets:
+        target_summary = ", ".join(targets)
+    elif broken_targets:
+        target_summary = f"broken: {', '.join(broken_targets)}"
+    else:
+        target_summary = "not configured"
     print(f"\nPsyche: {target_summary} (entry: {psyche['entry']})")
 
 
