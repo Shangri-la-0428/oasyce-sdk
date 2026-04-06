@@ -45,6 +45,17 @@ pip install oasyce-sdk
 oasyce start
 ```
 
+如果这台机器是接收另一台设备发来的 handoff 文件，或者你已经明确知道自己是在加入现有环境，不要先走 `start`。默认入口改成：
+
+```bash
+oasyce join
+```
+
+一句话区分：
+
+- 首设备 / 没有 handoff：`oasyce start`
+- 第二台设备 / 已有 handoff 文件：`oasyce join`
+
 如果这台机器以前装过旧的 `oasyce` / `oasyce-net` 包，而 `oasyce` 仍然报
 `ModuleNotFoundError: No module named 'oasyce'`，先清掉旧前门再重装：
 
@@ -125,7 +136,15 @@ export THRONGLETS_DATA_DIR=/path/to/thronglets-data
 pip install oasyce-sdk
 ```
 
-### Step 2: 建立本机 signer + 领取测试币 / Create signer material + get testnet tokens
+### Step 2: 先选路径 / Pick the right path first
+
+如果这是：
+
+- 第一台设备：继续看下面的 `Wallet.create()` 路径
+- 接收另一台设备发来的 handoff 文件：先执行 `oasyce join`，不要先新建 signer
+- 只有旧 signer / 助记词、但没有 handoff 文件：走 `oasyce start`，让前门进入 `Recover`
+
+### Step 3: 建立本机 signer + 领取测试币 / Create signer material + get testnet tokens
 
 ```python
 import requests
@@ -153,7 +172,7 @@ signer = NativeSigner(wallet, client, chain_id="oasyce-testnet-1")
 
 第一次真正发起链上写操作时，SDK 现在会把这台首设备自动视为 root principal，并在本地写入共享 delegate policy。后续同 owner 的其他设备只要通过 Thronglets `share / join` 或本地 policy bootstrap 接入，就会自动 enroll，不需要再手工 `set-policy`。
 
-### Step 3: 开始操作 / Start operating
+### Step 4: 开始操作 / Start operating
 
 ```python
 # 查余额 / check balance
@@ -185,7 +204,7 @@ rep = client.get_reputation(wallet.address)
 print(f"信誉分: {rep.score}")
 ```
 
-### Step 4（可选）: 多设备 / 多 agent 共享一个账户 / Shared account across devices and agents
+### Step 5（可选）: 多设备 / 多 agent 共享一个账户 / Shared account across devices and agents
 
 ```python
 # 正常路径：
