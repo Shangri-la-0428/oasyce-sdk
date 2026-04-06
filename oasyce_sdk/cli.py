@@ -32,6 +32,7 @@ DEFAULT_CHAIN_ID = "oasyce-testnet-1"
 DEFAULT_FAUCET_URL = "http://47.93.32.88:8080"
 MIN_READY_BALANCE_UOAS = 1_000_000
 THRONGLETS_IDENTITY_SCHEMA_V2 = "thronglets.identity.v2"
+READY_THROUNGLETS_STATUSES = {"ready", "network-ready", "healthy"}
 
 
 def _home_dir() -> Path:
@@ -436,6 +437,114 @@ def _psyche_entry_mode() -> str:
     return "missing"
 
 
+def _collect_thronglets_runtime_status() -> tuple[dict, str | None]:
+    active_runtime = None
+    try:
+        base = _resolve_thronglets_base_command()
+        active_runtime = " ".join(_thronglets_command(base))
+        return _run_json_command(_thronglets_command(base, "status", "--json")), active_runtime
+    except Exception as exc:
+        return {"status": "unavailable", "error": str(exc)}, active_runtime
+
+
+def _thronglets_health_snapshot(thronglets: dict, active_runtime: str | None, managed_runtime: str | None) -> dict:
+    if thronglets.get("status") == "unavailable":
+        repair = "thronglets setup" if (managed_runtime and Path(managed_runtime).exists()) or active_runtime else None
+        return {
+            "state": "broken" if repair else "degraded",
+            "detail": thronglets.get("error", "runtime unavailable"),
+            "repair": repair,
+        }
+
+    summary = (thronglets.get("data") or {}).get("summary") or {}
+    substrate_status = summary.get("status", "unknown")
+    drifted = bool(active_runtime and managed_runtime and active_runtime != managed_runtime)
+    if substrate_status in READY_THROUNGLETS_STATUSES:
+        if drifted:
+            return {
+                "state": "degraded",
+                "detail": "runtime drifted from the canonical managed surface",
+                "repair": "thronglets setup",
+            }
+        return {
+            "state": "ready",
+            "detail": f"attached ({substrate_status})",
+            "repair": None,
+        }
+
+    return {
+        "state": "degraded",
+        "detail": f"runtime attached but substrate status is {substrate_status}",
+        "repair": "thronglets status --json",
+    }
+
+
+def _psyche_health_snapshot() -> dict:
+    entry = _psyche_entry_mode()
+    configured_targets = _psyche_configured_targets()
+    broken_targets = _psyche_broken_targets()
+    if broken_targets:
+        return {
+            "state": "broken",
+            "detail": f"configured targets do not currently load: {', '.join(broken_targets)}",
+            "repair": "npx -y psyche-ai setup",
+            "configured_targets": configured_targets,
+            "broken_targets": broken_targets,
+            "entry": entry,
+        }
+    if configured_targets:
+        return {
+            "state": "ready",
+            "detail": f"attached to {', '.join(configured_targets)}",
+            "repair": None,
+            "configured_targets": configured_targets,
+            "broken_targets": broken_targets,
+            "entry": entry,
+        }
+    if entry == "missing":
+        return {
+            "state": "degraded",
+            "detail": "runtime entry is unavailable on this machine",
+            "repair": "install psyche-ai or make npx available",
+            "configured_targets": configured_targets,
+            "broken_targets": broken_targets,
+            "entry": entry,
+        }
+    return {
+        "state": "degraded",
+        "detail": "runtime is available but not attached to any supported host yet",
+        "repair": "npx -y psyche-ai setup",
+        "configured_targets": configured_targets,
+        "broken_targets": broken_targets,
+        "entry": entry,
+    }
+
+
+def _stack_health(agent_running: bool, thronglets: dict, active_runtime: str | None, managed_runtime: str | None) -> dict:
+    agent = {
+        "state": "ready" if agent_running else "degraded",
+        "detail": "background agent is running" if agent_running else "background agent is stopped",
+        "repair": None if agent_running else "oasyce start",
+    }
+    thronglets_health = _thronglets_health_snapshot(thronglets, active_runtime, managed_runtime)
+    psyche_health = _psyche_health_snapshot()
+    component_states = [agent["state"], thronglets_health["state"], psyche_health["state"]]
+    if "broken" in component_states:
+        overall = "broken"
+    elif "degraded" in component_states:
+        overall = "degraded"
+    else:
+        overall = "ready"
+    return {
+        "overall": overall,
+        "components": {
+            "agent": agent,
+            "thronglets": thronglets_health,
+            "psyche": psyche_health,
+        },
+    }
+
+
 def _collect_status() -> dict:
     try:
         identity = IdentityResolver.resolve_local()
@@ -445,24 +554,14 @@ def _collect_status() -> dict:
 
     agent_running, agent_message = daemon.status()
 
-    try:
-        base = _resolve_thronglets_base_command()
-        thronglets = _run_json_command(_thronglets_command(base, "status", "--json"))
-    except Exception as exc:
-        thronglets = {"status": "unavailable", "error": str(exc)}
-    try:
-        active_runtime = " ".join(_thronglets_command(_resolve_thronglets_base_command()))
-    except Exception:
-        active_runtime = None
-
-    psyche_targets = _psyche_configured_targets()
-    psyche_broken_targets = _psyche_broken_targets()
-    psyche = {
-        "entry": _psyche_entry_mode(),
-        "configured_targets": psyche_targets,
-        "broken_targets": psyche_broken_targets,
-        "configured": bool(psyche_targets),
-    }
+    thronglets, active_runtime = _collect_thronglets_runtime_status()
+    psyche = _psyche_health_snapshot()
+    health = _stack_health(
+        agent_running,
+        thronglets,
+        active_runtime,
+        str(_managed_thronglets_path()),
+    )
 
     return {
         "identity": identity_data,
@@ -472,6 +571,7 @@ def _collect_status() -> dict:
         },
         "thronglets": thronglets,
         "psyche": psyche,
+        "health": health,
         "paths": {
             "oasyce_dir": daemon.OASYCE_DIR,
             "agent_log": daemon.LOG_FILE,
@@ -486,9 +586,13 @@ def _print_status_report(status: dict) -> None:
     agent = status["agent"]
     thronglets = status["thronglets"]
     psyche = status["psyche"]
+    health = status.get("health", {})
+    components = health.get("components", {})
     paths = status["paths"]
 
     print("Oasyce status\n")
+    if health.get("overall"):
+        print(f"Stack:      {health['overall']}")
 
     if identity.get("status") == "missing":
         print(f"Identity: missing ({identity.get('error', 'no local signer')})")
@@ -500,14 +604,25 @@ def _print_status_report(status: dict) -> None:
             print(f"Principal:{identity['principal']}")
         print(f"Delegate: {identity['delegate']}")
 
-    print(f"\nAgent: {'running' if agent['running'] else 'stopped'}")
+    agent_health = components.get("agent", {})
+    print(f"\nAgent: {agent_health.get('state', 'unknown')}")
+    if agent_health.get("detail"):
+        print(f"Detail:     {agent_health['detail']}")
+    if agent_health.get("repair"):
+        print(f"Repair:     {agent_health['repair']}")
 
     if thronglets.get("status") == "unavailable":
-        print(f"Thronglets: unavailable ({thronglets.get('error', 'unknown error')})")
+        thronglets_health = components.get("thronglets", {})
+        print(f"\nThronglets: {thronglets_health.get('state', 'unknown')}")
+        print(f"Detail:     {thronglets_health.get('detail', thronglets.get('error', 'unknown error'))}")
+        if thronglets_health.get("repair"):
+            print(f"Repair:     {thronglets_health['repair']}")
     else:
         data = thronglets.get("data", {})
         summary = data.get("summary", {})
-        print(f"Thronglets: {summary.get('status', 'unknown')}")
+        thronglets_health = components.get("thronglets", {})
+        print(f"\nThronglets: {thronglets_health.get('state', 'unknown')}")
+        print(f"Detail:     {thronglets_health.get('detail', summary.get('status', 'unknown'))}")
         owner_account = summary.get("owner_account")
         if owner_account:
             print(f"Owner:      {owner_account}")
@@ -523,16 +638,13 @@ def _print_status_report(status: dict) -> None:
                 print("Runtime:    drifted")
                 print(f"Active:     {active_runtime}")
                 print(f"Canonical:  {managed_runtime}")
+        if thronglets_health.get("repair"):
+            print(f"Repair:     {thronglets_health['repair']}")
 
-    targets = psyche["configured_targets"]
-    broken_targets = psyche.get("broken_targets", [])
-    if targets:
-        target_summary = ", ".join(targets)
-    elif broken_targets:
-        target_summary = f"broken: {', '.join(broken_targets)}"
-    else:
-        target_summary = "not configured"
-    print(f"\nPsyche: {target_summary} (entry: {psyche['entry']})")
+    print(f"\nPsyche: {psyche['state']} (entry: {psyche['entry']})")
+    print(f"Detail:     {psyche['detail']}")
+    if psyche.get("repair"):
+        print(f"Repair:     {psyche['repair']}")
 
 
 def _best_effort(label: str, func, issues: list[str]) -> bool:
@@ -545,14 +657,22 @@ def _best_effort(label: str, func, issues: list[str]) -> bool:
 
 
 def _bootstrap_thronglets() -> None:
+    runtime = _ensure_canonical_thronglets_runtime()
     _run_checked(
-        _thronglets_command(_ensure_canonical_thronglets_runtime(), "bootstrap", "--json"),
+        _thronglets_command(runtime, "bootstrap", "--json"),
         capture_output=True,
     )
+    thronglets, active_runtime = _collect_thronglets_runtime_status()
+    health = _thronglets_health_snapshot(thronglets, active_runtime, str(_managed_thronglets_path()))
+    if health["state"] == "broken":
+        raise RuntimeError(health["detail"])
 
 
 def _setup_psyche() -> None:
     _run_checked(_resolve_psyche_base_command() + ["setup"])
+    health = _psyche_health_snapshot()
+    if health["state"] == "broken":
+        raise RuntimeError(health["detail"])
 
 
 def cmd_start(args) -> None:
