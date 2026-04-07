@@ -28,6 +28,7 @@ def test_start_bootstraps_stack_and_starts_agent(monkeypatch, tmp_path, capsys):
     )
     monkeypatch.setattr(frontdoor, "_bootstrap_thronglets", lambda: calls.append("thronglets"))
     monkeypatch.setattr(frontdoor, "_setup_psyche", lambda: calls.append("psyche"))
+    monkeypatch.setattr(frontdoor, "_configure_oasyce_mcp", lambda: ["Claude Code"])
     monkeypatch.setattr(frontdoor.daemon, "start", lambda: (True, "Agent started"))
     monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path))
 
@@ -62,6 +63,7 @@ def test_start_warns_but_still_succeeds_when_optional_setup_fails(monkeypatch, t
     monkeypatch.setattr(frontdoor, "_ensure_chain_ready", fail_chain)
     monkeypatch.setattr(frontdoor, "_bootstrap_thronglets", fail_thronglets)
     monkeypatch.setattr(frontdoor, "_setup_psyche", fail_psyche)
+    monkeypatch.setattr(frontdoor, "_configure_oasyce_mcp", lambda: [])
     monkeypatch.setattr(frontdoor.daemon, "start", lambda: (True, "Agent started"))
     monkeypatch.setattr(frontdoor.daemon, "OASYCE_DIR", str(tmp_path))
 
@@ -169,6 +171,7 @@ def test_join_uses_noninteractive_identity_after_connection_join(monkeypatch, tm
     )
     monkeypatch.setattr(frontdoor, "_bootstrap_thronglets", lambda: None)
     monkeypatch.setattr(frontdoor, "_setup_psyche", lambda: None)
+    monkeypatch.setattr(frontdoor, "_configure_oasyce_mcp", lambda: [])
     monkeypatch.setattr(frontdoor.daemon, "start", lambda: (True, "Agent started"))
 
     with pytest.raises(SystemExit) as exc:
@@ -211,6 +214,7 @@ def test_join_uses_default_desktop_connection_path(monkeypatch, tmp_path, capsys
     )
     monkeypatch.setattr(frontdoor, "_bootstrap_thronglets", lambda: None)
     monkeypatch.setattr(frontdoor, "_setup_psyche", lambda: None)
+    monkeypatch.setattr(frontdoor, "_configure_oasyce_mcp", lambda: [])
     monkeypatch.setattr(frontdoor.daemon, "start", lambda: (True, "Agent started"))
 
     with pytest.raises(SystemExit) as exc:
@@ -645,3 +649,92 @@ def test_ensure_chain_ready_self_heals_registration_balance_and_policy(monkeypat
     assert faucet_calls == ["oasyce1device"]
     assert ready["principal"] == "oasyce1device"
     assert ready["balance_uoas"] == 2_000_000
+
+
+# ---------------------------------------------------------------------------
+# MCP auto-configuration tests
+# ---------------------------------------------------------------------------
+
+
+def test_configure_oasyce_mcp_writes_to_detected_tools(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # Create Claude Code dir with existing settings
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "settings.json").write_text('{"mcpServers": {}}')
+
+    # Create Cursor dir
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+
+    # Create Codex dir
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "config.toml").write_text("")
+
+    # No claude CLI to prevent hot-load attempt
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: None)
+
+    targets = frontdoor._configure_oasyce_mcp()
+    assert "Claude Code" in targets
+    assert "Cursor" in targets
+    assert "Codex" in targets
+
+    # Verify Claude Code config
+    data = json.loads((claude_dir / "settings.json").read_text())
+    assert "oasyce" in data["mcpServers"]
+    assert data["mcpServers"]["oasyce"]["command"] == "oasyce-mcp"
+
+    # Verify Cursor config (created from scratch)
+    data = json.loads((cursor_dir / "mcp.json").read_text())
+    assert "oasyce" in data["mcpServers"]
+
+    # Verify Codex config
+    text = (codex_dir / "config.toml").read_text()
+    assert "[mcp_servers.oasyce]" in text
+
+
+def test_configure_oasyce_mcp_skips_already_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: None)
+
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    existing = {"mcpServers": {"oasyce": {"command": "custom-oasyce"}}}
+    (claude_dir / "settings.json").write_text(json.dumps(existing))
+
+    targets = frontdoor._configure_oasyce_mcp()
+    assert "Claude Code" in targets
+
+    # Should NOT overwrite existing config
+    data = json.loads((claude_dir / "settings.json").read_text())
+    assert data["mcpServers"]["oasyce"]["command"] == "custom-oasyce"
+
+
+def test_configure_oasyce_mcp_skips_missing_tools(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor.shutil, "which", lambda name: None)
+    # No tool directories exist
+    targets = frontdoor._configure_oasyce_mcp()
+    assert targets == []
+
+
+def test_oasyce_mcp_configured_targets_detection(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    # Claude Code with oasyce configured
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "settings.json").write_text(
+        json.dumps({"mcpServers": {"oasyce": {"command": "oasyce-mcp"}}})
+    )
+
+    # Cursor without oasyce
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir()
+    (cursor_dir / "mcp.json").write_text(json.dumps({"mcpServers": {}}))
+
+    targets = frontdoor._oasyce_mcp_configured_targets()
+    assert "Claude Code" in targets
+    assert "Cursor" not in targets

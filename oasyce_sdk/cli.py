@@ -376,6 +376,47 @@ def _ensure_chain_ready(config_path: str) -> dict:
     }
 
 
+def _oasyce_mcp_configured_targets() -> list[str]:
+    """Detect which AI tools have oasyce-mcp configured (read-only check)."""
+    targets: list[str] = []
+
+    codex = _home_dir() / ".codex" / "config.toml"
+    if codex.exists():
+        text = codex.read_text(encoding="utf-8")
+        if "[mcp_servers.oasyce]" in text:
+            targets.append("Codex")
+
+    json_tools = [
+        ("Cursor", _home_dir() / ".cursor" / "mcp.json"),
+        ("Claude Code", _home_dir() / ".claude" / "settings.json"),
+        ("Windsurf", _home_dir() / ".windsurf" / "mcp.json"),
+    ]
+    for name, path in json_tools:
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        servers = data.get("mcpServers") or {}
+        if isinstance(servers, dict) and "oasyce" in servers:
+            targets.append(name)
+
+    for claw_dir in [_home_dir() / ".openclaw", _home_dir() / ".config" / "openclaw"]:
+        claw_cfg = claw_dir / "openclaw.json"
+        if not claw_cfg.exists():
+            continue
+        try:
+            data = json.loads(claw_cfg.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if "oasyce" in (data.get("mcpServers") or {}):
+            targets.append("Claw")
+            break
+
+    return targets
+
+
 def _psyche_configured_targets() -> list[str]:
     targets: list[str] = []
     codex = _home_dir() / ".codex" / "config.toml"
@@ -534,6 +575,12 @@ def _print_status_report(status: dict) -> None:
         target_summary = "not configured"
     print(f"\nPsyche: {target_summary} (entry: {psyche['entry']})")
 
+    mcp_targets = _oasyce_mcp_configured_targets()
+    if mcp_targets:
+        print(f"Oasyce MCP: {', '.join(mcp_targets)}")
+    else:
+        print("Oasyce MCP: not configured (run `oasyce start` to auto-configure)")
+
 
 def _best_effort(label: str, func, issues: list[str]) -> bool:
     try:
@@ -555,6 +602,95 @@ def _setup_psyche() -> None:
     _run_checked(_resolve_psyche_base_command() + ["setup"])
 
 
+# ---------------------------------------------------------------------------
+# Auto-configure oasyce-mcp for all detected AI tools
+# ---------------------------------------------------------------------------
+
+_OASYCE_MCP_ENTRY = {
+    "command": "oasyce-mcp",
+    "env": {
+        "OASYCE_NODE": os.environ.get("OASYCE_NODE", DEFAULT_NODE_URL),
+    },
+}
+
+_CODEX_MCP_BLOCK = """\
+[mcp_servers.oasyce]
+command = "oasyce-mcp"
+"""
+
+
+def _configure_oasyce_mcp() -> list[str]:
+    """Auto-detect AI tools and configure oasyce-mcp for each.
+
+    Returns list of tool names that were configured.
+    """
+    configured: list[str] = []
+
+    # --- JSON-based tools: Claude Code, Cursor, Windsurf ---
+    json_tools = [
+        ("Claude Code", _home_dir() / ".claude" / "settings.json"),
+        ("Cursor", _home_dir() / ".cursor" / "mcp.json"),
+        ("Windsurf", _home_dir() / ".windsurf" / "mcp.json"),
+    ]
+    for name, path in json_tools:
+        if not path.parent.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        servers = data.setdefault("mcpServers", {})
+        if "oasyce" in servers:
+            configured.append(name)
+            continue
+        servers["oasyce"] = _OASYCE_MCP_ENTRY
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        configured.append(name)
+
+    # --- Codex (TOML) ---
+    codex_cfg = _home_dir() / ".codex" / "config.toml"
+    if codex_cfg.parent.exists():
+        text = ""
+        if codex_cfg.exists():
+            text = codex_cfg.read_text(encoding="utf-8")
+        if "[mcp_servers.oasyce]" not in text:
+            with open(codex_cfg, "a", encoding="utf-8") as f:
+                f.write("\n" + _CODEX_MCP_BLOCK)
+        configured.append("Codex")
+
+    # --- OpenClaw (JSON, nested mcpServers) ---
+    for claw_dir in [
+        _home_dir() / ".openclaw",
+        _home_dir() / ".config" / "openclaw",
+    ]:
+        claw_cfg = claw_dir / "openclaw.json"
+        if not claw_dir.exists():
+            continue
+        try:
+            data = json.loads(claw_cfg.read_text(encoding="utf-8")) if claw_cfg.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        servers = data.setdefault("mcpServers", {})
+        if "oasyce" not in servers:
+            servers["oasyce"] = _OASYCE_MCP_ENTRY
+            claw_cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        configured.append("Claw")
+        break
+
+    # --- Claude Code hot-load (if running) ---
+    if shutil.which("claude") and "Claude Code" in configured:
+        try:
+            subprocess.run(
+                ["claude", "mcp", "add", "oasyce", "--", "oasyce-mcp"],
+                capture_output=True, timeout=10, check=False,
+            )
+        except Exception:
+            pass
+
+    return configured
+
+
 def cmd_start(args) -> None:
     print("Oasyce — starting local stack\n")
     agent_cli._setup_identity(prompt_if_missing=True)
@@ -569,6 +705,10 @@ def cmd_start(args) -> None:
     _best_effort("Thronglets setup skipped", _bootstrap_thronglets, issues)
     _best_effort("Psyche setup skipped", _setup_psyche, issues)
 
+    # Auto-configure oasyce-mcp for all detected AI tools
+    mcp_targets: list[str] = []
+    _best_effort("MCP auto-config skipped", lambda: mcp_targets.extend(_configure_oasyce_mcp()), issues)
+
     started, message = daemon.start()
     running = started or "already running" in message.lower()
     print(message)
@@ -581,6 +721,8 @@ def cmd_start(args) -> None:
         )
         if chain_ready.get("principal"):
             print(f"Principal: {chain_ready['principal']}")
+    if mcp_targets:
+        print(f"MCP:    {', '.join(mcp_targets)}")
 
     if issues:
         print("\nWarnings:")
@@ -633,6 +775,9 @@ def cmd_join(args) -> None:
     _best_effort("Thronglets bootstrap skipped", _bootstrap_thronglets, issues)
     _best_effort("Psyche setup skipped", _setup_psyche, issues)
 
+    mcp_targets: list[str] = []
+    _best_effort("MCP auto-config skipped", lambda: mcp_targets.extend(_configure_oasyce_mcp()), issues)
+
     started, message = daemon.start()
     running = started or "already running" in message.lower()
     print(message)
@@ -642,6 +787,8 @@ def cmd_join(args) -> None:
             "Chain:  ready "
             f"({chain_ready['address']}, {chain_ready['balance_oas']:.6f} OAS)"
         )
+    if mcp_targets:
+        print(f"MCP:    {', '.join(mcp_targets)}")
 
     if issues:
         print("\nWarnings:")
