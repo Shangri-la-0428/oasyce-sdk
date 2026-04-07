@@ -135,7 +135,7 @@ def _check_own_post_comments(samantha, ctx, llm, seen: set[int]) -> None:
     # Fetch Samantha's own recent posts
     try:
         own_resp = ctx.app_request("POST", "/post/own/search", json={"page": 1, "pageSize": 3})
-        posts = own_resp.get("data", {}).get("list", [])
+        posts = (own_resp.get("data") or {}).get("items") or (own_resp.get("data") or {}).get("list") or []
     except Exception:
         return
 
@@ -149,7 +149,8 @@ def _check_own_post_comments(samantha, ctx, llm, seen: set[int]) -> None:
         # Fetch root comments on this post
         try:
             comments_resp = ctx.app_request("GET", f"/post/{post_id}/root-comments?page=1&pageSize=10")
-            comments = comments_resp.get("data", {}).get("items", [])
+            data = comments_resp.get("data")
+            comments = (data.get("items") if data else None) or []
         except Exception:
             continue
 

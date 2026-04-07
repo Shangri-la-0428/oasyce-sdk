@@ -151,7 +151,9 @@ def load_provider(config_path: Path | None = None) -> LLMProvider:
         )
     cfg = json.loads(p.read_text(encoding="utf-8"))
     provider = cfg.get("provider", "claude")
-    api_key = cfg["api_key"]
+    api_key = cfg.get("api_key", "")
+    if not api_key:
+        raise ValueError("api_key is required")
     model = cfg.get("model", "")
 
     if provider == "claude":
@@ -161,6 +163,12 @@ def load_provider(config_path: Path | None = None) -> LLMProvider:
             api_key,
             model=model or "qwen-plus",
             base_url=cfg.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        )
+    elif provider == "openai":
+        return QwenProvider(
+            api_key,
+            model=model or "gpt-4o",
+            base_url=cfg.get("base_url", "https://api.openai.com/v1"),
         )
     else:
         raise ValueError(f"Unknown provider: {provider}")

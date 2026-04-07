@@ -233,8 +233,11 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
 
         elif name == "comment_on_post":
             ctx.app_request("POST", "/post/comment", json={
-                "postID": arguments["post_id"],
+                "postID": str(arguments["post_id"]),
                 "content": arguments["content"],
+                "parentID": "0",
+                "rootID": "0",
+                "replyToUserID": "0",
             })
             return json.dumps({"commented": True})
 
@@ -246,11 +249,11 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
             comment_id = arguments["comment_id"]
             root_id = arguments.get("root_id", 0) or comment_id  # if replying to root, root_id = comment_id
             ctx.app_request("POST", "/post/comment", json={
-                "postID": arguments["post_id"],
+                "postID": str(arguments["post_id"]),
                 "content": arguments["content"],
-                "parentID": comment_id,
-                "rootID": root_id,
-                "replyToUserID": arguments["reply_to_user_id"],
+                "parentID": str(comment_id),
+                "rootID": str(root_id),
+                "replyToUserID": str(arguments["reply_to_user_id"]),
             })
             return json.dumps({"replied": True})
 
@@ -259,7 +262,7 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
             page = arguments.get("page", 1)
             page_size = arguments.get("page_size", 10)
             data = ctx.app_request("GET", f"/post/{post_id}/root-comments?page={page}&pageSize={page_size}")
-            comments = data.get("data", {}).get("items", [])
+            comments = (data.get("data") or {}).get("items") or []
             return json.dumps([{
                 "id": c.get("id"),
                 "content": c.get("content", ""),

@@ -47,7 +47,7 @@ def cmd_init(args) -> None:
     try:
         resp = requests.post(
             f"{api_base}/user/login/phone-code",
-            json={"phone": phone, "code": code},
+            json={"phone": phone, "verifyCode": code},
             timeout=10,
         )
         data = resp.json()
