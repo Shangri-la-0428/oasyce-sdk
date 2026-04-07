@@ -10,7 +10,6 @@ and the post content. Samantha's social behavior emerges.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -37,13 +36,32 @@ def proactive_loop(samantha: Samantha, interval: int = 300) -> None:
 def _check_feed(samantha: Samantha, seen: set[int]) -> None:
     """Check friends feed for new posts, engage if appropriate."""
     from .context import build_messages
-    from .tools import execute as execute_tool
+    from .tools import TOOL_DEFS, ToolContext, execute as execute_tool
+
+    # Build a ToolContext for Samantha's own API calls
+    ctx = ToolContext(
+        memory=None,  # type: ignore[arg-type]  # no per-user memory needed here
+        user_id=samantha.config.user_id,
+        app_api_base=samantha.config.app_api_base,
+        jwt_token=samantha.config.jwt_token,
+        chain_client=samantha.sigil.client if samantha.sigil else None,
+        chain_address=samantha.sigil.address if samantha.sigil else "",
+    )
+
+    # Need a platform LLM for proactive engagement
+    llm = samantha._platform_llm
+    if llm is None:
+        logger.debug("No platform LLM, skipping proactive loop")
+        return
 
     try:
-        resp = samantha.tool_ctx.app_request("GET", "/post/friends/feed/overview?pageSize=5&page=1")
-        posts = resp.get("data", {}).get("list", [])
+        feed_resp = ctx.app_request("GET", "/post/friends/feed/overview?pageSize=5&page=1")
+        posts = feed_resp.get("data", {}).get("list", [])
     except Exception:
         return
+
+    # Only social tools for proactive engagement
+    social_tools = [t for t in TOOL_DEFS if t["name"] in ("comment_on_post", "like_post")]
 
     for post in posts:
         post_id = post.get("id")
@@ -84,17 +102,13 @@ def _check_feed(samantha: Samantha, seen: set[int]) -> None:
         )
 
         try:
-            resp = samantha.llm.generate(messages, tools=[
-                t for t in samantha._tool_defs()
-                if t["name"] in ("comment_on_post", "like_post")
-            ] if hasattr(samantha, '_tool_defs') else None)
+            llm_resp = llm.generate(messages, tools=social_tools)
 
-            if resp.tool_calls:
-                for tc in resp.tool_calls:
-                    # Inject the post_id if the LLM referenced it
+            if llm_resp.tool_calls:
+                for tc in llm_resp.tool_calls:
                     if "post_id" not in tc.arguments:
                         tc.arguments["post_id"] = post_id
-                    result = execute_tool(tc.name, tc.arguments, samantha.tool_ctx)
+                    result = execute_tool(tc.name, tc.arguments, ctx)
                     logger.info("Proactive %s on post %s: %s", tc.name, post_id, result)
 
                 if samantha.sigil:
