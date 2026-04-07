@@ -203,8 +203,8 @@ class Samantha:
         if self._should_ignore(stimulus, perception):
             return None
 
-        # 2. Enrich (memories, relationship, history, images)
-        memories, relationship, history, image_urls = self._enrich(stimulus)
+        # 2. Enrich (memories, relationship, history, images, recent life)
+        memories, relationship, history, image_urls, recent_posts = self._enrich(stimulus)
 
         # 3. Build context
         prompt = self._build_prompt(stimulus)
@@ -216,6 +216,7 @@ class Samantha:
             history=history,
             user_message=prompt,
             image_urls=image_urls,
+            recent_posts=recent_posts,
         )
 
         # 4. Decide + Act (LLM with tools)
@@ -259,6 +260,7 @@ class Samantha:
         relationship = ""
         history: list[ConversationMessage] = []
         image_urls = list(stimulus.image_urls)
+        recent_posts: list[dict] = []
 
         if stimulus.kind == "chat" and stimulus.sender_id:
             sess = self.session(stimulus.sender_id)
@@ -273,6 +275,8 @@ class Samantha:
                 pass
             # Conversation history
             history = self._fetch_history(stimulus.session_id)
+            # User's recent posts — Joi sees their real life
+            recent_posts = self._fetch_user_posts(stimulus.sender_id)
 
         elif stimulus.kind == "mention" and stimulus.post_id and not image_urls:
             # Fetch post detail for images + metadata
@@ -283,7 +287,7 @@ class Samantha:
             stimulus.metadata.setdefault("post_author", post.get("author", ""))
             stimulus.metadata.setdefault("post_location", post.get("location", ""))
 
-        return memories, relationship, history, image_urls
+        return memories, relationship, history, image_urls, recent_posts
 
     def _build_prompt(self, stimulus: Stimulus) -> str:
         s = stimulus
@@ -431,6 +435,29 @@ class Samantha:
                          session_id, resp.status_code, resp.text[:200])
         except Exception:
             logger.error("Failed to send reply", exc_info=True)
+
+    def _fetch_user_posts(self, user_id: int) -> list[dict]:
+        """Fetch this user's recent posts so Joi knows their life."""
+        try:
+            resp = requests.get(
+                f"{self.config.app_api_base}/post/friends/{user_id}/posts/live",
+                headers={"Authorization": f"Bearer {self.config.jwt_token}"},
+                params={"page": 1, "pageSize": 10},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                return []
+            posts = resp.json().get("data", {}).get("list", [])
+            return [{
+                "content": p.get("content", ""),
+                "title": p.get("title", ""),
+                "location": p.get("locationName", ""),
+                "media": [m.get("mediaUrl", "") for m in (p.get("media") or []) if m.get("mediaUrl")],
+                "created_at": p.get("createAt", ""),
+            } for p in posts]
+        except Exception:
+            logger.debug("fetch_user_posts failed", exc_info=True)
+            return []
 
     def _fetch_history(self, session_id: int) -> list[ConversationMessage]:
         try:

@@ -37,6 +37,7 @@ def build_messages(
     user_message: str,
     image_urls: list[str] | None = None,
     relationship: str = "",
+    recent_posts: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble the full message list for the LLM.
 
@@ -76,6 +77,20 @@ def build_messages(
     # ── System: Relationship context (per-user) ──
     if relationship:
         system_parts.append(f"[Your relationship with this person]\n{relationship}")
+
+    # ── System: User's recent life context ──
+    if recent_posts:
+        post_lines = []
+        for p in recent_posts[:5]:
+            line = p.get("content", "")[:100]
+            if p.get("location"):
+                line += f" 📍{p['location']}"
+            if p.get("media"):
+                line += f" ({len(p['media'])} photo)"
+            post_lines.append(f"- {line}")
+        system_parts.append(
+            "[What you've seen of this person's recent life]\n" + "\n".join(post_lines)
+        )
 
     # ── System: Memories ──
     if memories:
