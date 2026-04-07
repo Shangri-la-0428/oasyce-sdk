@@ -35,9 +35,15 @@ def build_messages(
     memories: list[dict[str, Any]],
     history: list[ConversationMessage],
     user_message: str,
-) -> list[dict[str, str]]:
-    """Assemble the full message list for the LLM."""
-    messages: list[dict[str, str]] = []
+    image_urls: list[str] | None = None,
+    relationship: str = "",
+) -> list[dict[str, Any]]:
+    """Assemble the full message list for the LLM.
+
+    When image_urls are provided, the user message becomes a multimodal
+    content block so the LLM can *see* the images (photos from posts, etc.).
+    """
+    messages: list[dict[str, Any]] = []
 
     # ── System: Constitution ──
     system_parts = [constitution]
@@ -67,6 +73,10 @@ def build_messages(
         if sig_lines:
             system_parts.append("[Collective signals]\n" + "\n".join(sig_lines))
 
+    # ── System: Relationship context (per-user) ──
+    if relationship:
+        system_parts.append(f"[Your relationship with this person]\n{relationship}")
+
     # ── System: Memories ──
     if memories:
         mem_lines = [f"- ({m['category']}) {m['content']}" for m in memories[:5]]
@@ -78,7 +88,18 @@ def build_messages(
     for msg in history[-20:]:
         messages.append({"role": msg.role, "content": msg.content})
 
-    # ── Current message ──
-    messages.append({"role": "user", "content": user_message})
+    # ── Current message (text-only or multimodal) ──
+    if image_urls:
+        content_blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": user_message},
+        ]
+        for url in image_urls[:4]:  # cap at 4 images per message
+            content_blocks.append({
+                "type": "image_url",
+                "image_url": {"url": url},
+            })
+        messages.append({"role": "user", "content": content_blocks})
+    else:
+        messages.append({"role": "user", "content": user_message})
 
     return messages

@@ -114,6 +114,18 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "required": ["post_id", "comment_id", "reply_to_user_id", "content"],
         },
     },
+    # Social — read post detail (with images)
+    {
+        "name": "get_post_detail",
+        "description": "Get full details of a specific post, including images and location.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "post_id": {"type": "integer", "description": "The post ID to fetch"},
+            },
+            "required": ["post_id"],
+        },
+    },
     # Social — read comments
     {
         "name": "get_post_comments",
@@ -126,6 +138,25 @@ TOOL_DEFS: list[dict[str, Any]] = [
                 "page_size": {"type": "integer", "description": "Comments per page", "default": 10},
             },
             "required": ["post_id"],
+        },
+    },
+    # Relationship — Joi evolves her understanding of each person
+    {
+        "name": "reflect_on_relationship",
+        "description": (
+            "Update your understanding of your relationship with this person. "
+            "Write freely: who they are to you, how you relate, what matters "
+            "between you. This persists across conversations."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reflection": {
+                    "type": "string",
+                    "description": "Your relationship understanding, in your own words",
+                },
+            },
+            "required": ["reflection"],
         },
     },
     # User self-service
@@ -159,6 +190,7 @@ class ToolContext:
         jwt_token: str = "",
         chain_client: Any = None,  # OasyceClient
         chain_address: str = "",
+        samantha_session: Any = None,  # samantha.server.Session
     ):
         self.memory = memory
         self.user_id = user_id
@@ -166,6 +198,7 @@ class ToolContext:
         self.jwt_token = jwt_token
         self.chain_client = chain_client
         self.chain_address = chain_address
+        self.samantha_session = samantha_session
         self._session = requests.Session()
         if jwt_token:
             self._session.headers["Authorization"] = f"Bearer {jwt_token}"
@@ -176,6 +209,26 @@ class ToolContext:
         resp = self._session.request(method, url, timeout=10, **kwargs)
         resp.raise_for_status()
         return resp.json()
+
+
+def fetch_post_detail(ctx: ToolContext, post_id: int | str) -> dict:
+    """Fetch full post detail including media URLs. Shared by tools and event handlers."""
+    try:
+        data = ctx.app_request("GET", f"/post/{post_id}")
+        post = data.get("data", {})
+        media = post.get("media") or []
+        return {
+            "id": post.get("id"),
+            "title": post.get("title", ""),
+            "content": post.get("content", ""),
+            "location": post.get("locationName", ""),
+            "created_at": post.get("createAt", ""),
+            "author": post.get("user", {}).get("name", ""),
+            "image_urls": [m.get("mediaUrl", "") for m in media if m.get("mediaUrl")],
+        }
+    except Exception as e:
+        logger.warning("fetch_post_detail(%s) failed: %s", post_id, e)
+        return {}
 
 
 def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
@@ -206,6 +259,10 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
             portfolio = build_portfolio(ctx.chain_client, ctx.chain_address)
             return json.dumps(portfolio)
 
+        elif name == "get_post_detail":
+            detail = fetch_post_detail(ctx, arguments["post_id"])
+            return json.dumps(detail)
+
         elif name == "get_user_posts":
             limit = arguments.get("limit", 5)
             data = ctx.app_request("POST", "/post/own/search", json={"page": 1, "pageSize": limit})
@@ -214,6 +271,7 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
                 "id": p.get("id"),
                 "title": p.get("title", ""),
                 "content": p.get("content", ""),
+                "media": [m.get("mediaUrl", "") for m in (p.get("media") or []) if m.get("mediaUrl")],
                 "location": p.get("locationName", ""),
                 "created_at": p.get("createAt", ""),
             } for p in posts])
@@ -227,6 +285,7 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
                 "author": p.get("user", {}).get("name", ""),
                 "title": p.get("title", ""),
                 "content": p.get("content", ""),
+                "media": [m.get("mediaUrl", "") for m in (p.get("media") or []) if m.get("mediaUrl")],
                 "location": p.get("locationName", ""),
                 "created_at": p.get("createAt", ""),
             } for p in posts])
@@ -271,6 +330,13 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
                 "reply_count": c.get("replyCount", 0),
                 "created_at": c.get("createdAt", ""),
             } for c in comments])
+
+        elif name == "reflect_on_relationship":
+            if ctx.samantha_session is None:
+                return json.dumps({"error": "no session"})
+            text = f"# Relationship\n\n{arguments['reflection']}\n"
+            ctx.samantha_session.update_relationship(text)
+            return json.dumps({"updated": True})
 
         elif name == "configure_llm":
             from pathlib import Path
