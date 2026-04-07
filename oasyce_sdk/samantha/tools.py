@@ -98,6 +98,36 @@ TOOL_DEFS: list[dict[str, Any]] = [
             "required": ["post_id"],
         },
     },
+    # Social — reply to comment
+    {
+        "name": "reply_to_comment",
+        "description": "Reply to a comment on a post. Use to continue a conversation in comments.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "post_id": {"type": "integer", "description": "The post the comment belongs to"},
+                "comment_id": {"type": "integer", "description": "The comment to reply to"},
+                "root_id": {"type": "integer", "description": "The root comment ID (0 if replying to a root comment)"},
+                "reply_to_user_id": {"type": "integer", "description": "The user ID of the commenter you are replying to"},
+                "content": {"type": "string", "description": "Your reply text"},
+            },
+            "required": ["post_id", "comment_id", "reply_to_user_id", "content"],
+        },
+    },
+    # Social — read comments
+    {
+        "name": "get_post_comments",
+        "description": "Get root-level comments on a specific post.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "post_id": {"type": "integer", "description": "The post to get comments for"},
+                "page": {"type": "integer", "description": "Page number", "default": 1},
+                "page_size": {"type": "integer", "description": "Comments per page", "default": 10},
+            },
+            "required": ["post_id"],
+        },
+    },
     # User self-service
     {
         "name": "configure_llm",
@@ -211,6 +241,33 @@ def execute(name: str, arguments: dict[str, Any], ctx: ToolContext) -> str:
         elif name == "like_post":
             ctx.app_request("POST", f"/post/{arguments['post_id']}/like")
             return json.dumps({"liked": True})
+
+        elif name == "reply_to_comment":
+            comment_id = arguments["comment_id"]
+            root_id = arguments.get("root_id", 0) or comment_id  # if replying to root, root_id = comment_id
+            ctx.app_request("POST", "/post/comment", json={
+                "postID": arguments["post_id"],
+                "content": arguments["content"],
+                "parentID": comment_id,
+                "rootID": root_id,
+                "replyToUserID": arguments["reply_to_user_id"],
+            })
+            return json.dumps({"replied": True})
+
+        elif name == "get_post_comments":
+            post_id = arguments["post_id"]
+            page = arguments.get("page", 1)
+            page_size = arguments.get("page_size", 10)
+            data = ctx.app_request("GET", f"/post/{post_id}/root-comments?page={page}&pageSize={page_size}")
+            comments = data.get("data", {}).get("items", [])
+            return json.dumps([{
+                "id": c.get("id"),
+                "content": c.get("content", ""),
+                "user_id": c.get("user", {}).get("id"),
+                "user_name": c.get("user", {}).get("name", ""),
+                "reply_count": c.get("replyCount", 0),
+                "created_at": c.get("createdAt", ""),
+            } for c in comments])
 
         elif name == "configure_llm":
             from pathlib import Path

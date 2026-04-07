@@ -268,6 +268,23 @@ class TestLLMSchema:
             assert "parameters" in tool
             assert tool["parameters"]["type"] == "object"
 
+    def test_new_comment_tools_exist(self):
+        from oasyce_sdk.samantha.tools import TOOL_DEFS
+
+        names = {t["name"] for t in TOOL_DEFS}
+        assert "reply_to_comment" in names
+        assert "get_post_comments" in names
+
+    def test_reply_to_comment_requires_fields(self):
+        from oasyce_sdk.samantha.tools import TOOL_DEFS
+
+        reply_tool = next(t for t in TOOL_DEFS if t["name"] == "reply_to_comment")
+        required = reply_tool["parameters"]["required"]
+        assert "post_id" in required
+        assert "comment_id" in required
+        assert "reply_to_user_id" in required
+        assert "content" in required
+
     def test_config_not_found_raises(self, tmp_path):
         from oasyce_sdk.samantha.llm import load_provider
 
