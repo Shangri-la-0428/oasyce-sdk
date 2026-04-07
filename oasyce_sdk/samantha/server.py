@@ -328,7 +328,7 @@ def main():
     config = SamanthaConfig.load()
     _samantha = Samantha(config)
 
-    # Start proactive feed watcher in background
+    # Proactive loop for self-initiated actions (browsing feed, posting)
     if config.proactive_interval > 0:
         from .loop import proactive_loop
         threading.Thread(
@@ -338,16 +338,31 @@ def main():
         ).start()
         logger.info("Proactive loop started (interval=%ds)", config.proactive_interval)
 
-    server = HTTPServer(("127.0.0.1", config.port), WebhookHandler)
-    logger.info("Samantha listening on http://127.0.0.1:%d", config.port)
+    # HTTP webhook server (legacy / fallback when WS unavailable)
+    threading.Thread(
+        target=_run_http_server,
+        args=(_samantha, config.port),
+        daemon=True,
+    ).start()
 
+    # WebSocket client — primary event channel (blocks)
+    from .ws_client import ws_listen
+    logger.info("Samantha starting — connecting to App WebSocket...")
     try:
-        server.serve_forever()
+        ws_listen(_samantha)
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
         _samantha.close()
+
+
+def _run_http_server(samantha: Samantha, port: int) -> None:
+    """Run HTTP server in background for health checks and webhook fallback."""
+    global _samantha
+    _samantha = samantha
+    server = HTTPServer(("127.0.0.1", port), WebhookHandler)
+    logger.info("Health endpoint on http://127.0.0.1:%d/health", port)
+    server.serve_forever()
 
 
 if __name__ == "__main__":
