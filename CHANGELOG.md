@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.7] - 2026-04-07
+
+### Added
+
+- **Economic perception layer** (`economy.py`): synthesized chain state views for autonomous AI economic reasoning
+- 4 new MCP tools: `economic_snapshot`, `work_opportunities`, `portfolio_view`, `estimate_action_cost`
+- `oasyce economy` CLI command: human-readable delegate economic snapshot
+- 19 unit tests covering snapshot aggregation, opportunity discovery, portfolio, cost estimation, and resilience
+
+### Design
+
+The AI model is the economic brain; the SDK provides proprioception. No strategy engine, no autopilot — just synthesized perception so AI delegates can reason about earning, spending, and investing autonomously.
+
 ## [0.10.6] - 2026-04-06
 
 - `oasyce join` now defaults to `~/Desktop/oasyce-connection.json` on the receiving machine, matching the normal handoff flow

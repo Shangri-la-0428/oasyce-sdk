@@ -123,6 +123,7 @@ oasyce start          # normal path: local binding + Thronglets + Psyche + agent
 oasyce share          # export connection file to ~/Desktop/oasyce-connection.json (self-describing bootstrap manifest inside)
 oasyce join [file]    # join another device from a connection file; defaults to ~/Desktop/oasyce-connection.json
 oasyce status         # unified local stack status
+oasyce economy        # delegate economic snapshot (balance, earnings, positions, budget)
 
 oasyce-agent stop     # stop the data agent
 oasyce-agent status   # data-agent focused status
@@ -141,13 +142,13 @@ oasyce join
 
 Do not default to `git clone` or editable installs unless the user explicitly asks to work from source.
 
-### MCP Server (43 tools)
+### MCP Server (47 tools)
 
 ```bash
 oasyce-mcp    # stdio transport, used by Claude/Cursor/Windsurf
 ```
 
-Includes: health, wallet, capabilities, data assets, tasks, anchoring, reputation, delegates, Sigil lifecycle (8 tools: get/create/dissolve/bond/fork sigils).
+Includes: health, wallet, capabilities, data assets, tasks, anchoring, reputation, delegates, Sigil lifecycle (8 tools), economic perception (4 tools: economic_snapshot, work_opportunities, portfolio_view, estimate_action_cost).
 
 ### SigilManager — the Loop itself
 

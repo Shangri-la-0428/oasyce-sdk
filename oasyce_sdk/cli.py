@@ -659,6 +659,79 @@ def cmd_status(args) -> None:
     _print_status_report(status)
 
 
+def cmd_economy(args) -> None:
+    """Show delegate economic snapshot."""
+    from .client import OasyceClient
+    from .economy import build_snapshot
+
+    node = os.environ.get("OASYCE_NODE", DEFAULT_NODE_URL)
+    client = OasyceClient(node)
+
+    try:
+        identity = IdentityResolver.resolve()
+        address = identity.wallet.address
+    except Exception:
+        print("No wallet found. Run `oasyce start` first.")
+        sys.exit(1)
+
+    snap = build_snapshot(client, address)
+
+    if args.json:
+        print(json.dumps(snap.to_dict(), indent=2, ensure_ascii=False))
+        return
+
+    d = snap.to_dict()
+    bs = d["balance_sheet"]
+    bud = d["budget"]
+    earn = d["earnings"]
+    exe = d["executor"]
+    debt = d["debt"]
+
+    print(f"Economy — {address[:20]}...")
+    print()
+    print("Balance Sheet")
+    print(f"  Liquid:       {bs['liquid_oas']:.2f} OAS")
+    print(f"  In escrow:    {bs['locked_in_escrow_oas']:.2f} OAS")
+    print(f"  Data equity:  {bs['data_equity_oas']:.2f} OAS")
+    print(f"  Net worth:    {bs['net_worth_oas']:.2f} OAS")
+
+    if bud["has_delegate_policy"]:
+        print()
+        print("Delegate Budget")
+        print(f"  Window:       {bud['window_remaining_oas']:.2f} / {bud['window_limit_oas']:.2f} OAS remaining")
+        print(f"  Per-tx limit: {bud['per_tx_limit_oas']:.2f} OAS")
+
+    print()
+    print("Earnings")
+    print(f"  Total earned: {earn['total_earned_oas']:.2f} OAS ({earn['total_capability_calls']} calls)")
+
+    if exe["registered"]:
+        print()
+        print("Executor")
+        print(f"  Types:     {', '.join(exe['task_types']) or '(none)'}")
+        print(f"  Completed: {exe['completed']}  Failed: {exe['failed']}")
+
+    print()
+    print(f"Reputation: {d['reputation']['score']}")
+
+    if debt["remaining_oas"] > 0:
+        print(f"Debt:       {debt['remaining_oas']:.2f} OAS remaining")
+
+    caps = d["positions"]["capabilities"]
+    assets = d["positions"]["data_assets"]
+    if caps:
+        print()
+        print(f"Capabilities ({len(caps)})")
+        for c in caps:
+            status = "active" if c["active"] else "inactive"
+            print(f"  {c['name']}: {c['earned_oas']:.2f} OAS earned, {c['calls']} calls [{status}]")
+    if assets:
+        print()
+        print(f"Data Assets ({len(assets)})")
+        for a in assets:
+            print(f"  {a['name']}: {a['equity_pct']}% equity, ~{a['value_oas']:.2f} OAS")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="oasyce",
@@ -692,6 +765,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_status = sub.add_parser("status", help="Show local stack status")
     p_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
+    p_economy = sub.add_parser("economy", help="Show delegate economic snapshot")
+    p_economy.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
     return parser
 
 
@@ -708,6 +785,9 @@ def main(argv: list[str] | None = None) -> None:
         cmd_join(args)
     if args.command == "status":
         cmd_status(args)
+        return
+    if args.command == "economy":
+        cmd_economy(args)
         return
 
     parser.print_help()

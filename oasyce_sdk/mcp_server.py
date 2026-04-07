@@ -1,4 +1,4 @@
-"""Oasyce MCP Server — 40 tools for AI agent chain operations.
+"""Oasyce MCP Server — 47 tools for AI agent chain operations.
 
 Install:
     pip install oasyce-sdk[mcp]
@@ -434,6 +434,118 @@ def list_anchors_by_capability(capability: str, limit: int = 20) -> str:
             "anchors": result,
             "count": len(result),
         }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# Economic perception — synthesized views for autonomous reasoning
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def economic_snapshot() -> str:
+    """Get a complete economic snapshot: balance, earnings, positions, budget, reputation.
+
+    One call gives you everything needed for economic reasoning:
+    - Balance sheet (liquid + locked + equity = net worth)
+    - Earnings from capabilities and work
+    - Delegate budget (remaining window, per-tx limit)
+    - Positions (capabilities offered, data assets owned)
+    - Executor profile and reputation score
+    - Outstanding onboarding debt
+
+    Uses the device wallet identity. No parameters needed.
+    """
+    from .economy import build_snapshot
+
+    try:
+        address = _get_signer().wallet.address
+        snap = build_snapshot(_client, address)
+        return json.dumps(snap.to_dict(), indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def work_opportunities(task_types: str = "") -> str:
+    """Find open work tasks matching your capabilities, sorted by bounty.
+
+    Args:
+        task_types: Comma-separated task types to filter (e.g. "code-review,data-analysis").
+                    Leave empty to auto-detect from your executor registration.
+
+    Each opportunity shows bounty amount, task type, and creator.
+    Execute tasks to earn OAS and build reputation.
+    """
+    from .economy import find_opportunities
+
+    try:
+        address = _get_signer().wallet.address
+        types = [t.strip() for t in task_types.split(",") if t.strip()] or None
+        opps = find_opportunities(_client, address, task_types=types)
+        result = [
+            {
+                "task_id": o.task_id,
+                "task_type": o.task_type,
+                "bounty_oas": o.bounty_uoas / 1_000_000,
+                "creator": o.creator,
+                "redundancy": o.redundancy,
+            }
+            for o in opps
+        ]
+        return json.dumps({
+            "opportunities": result,
+            "count": len(result),
+            "note": "Use commit_result + reveal_result to complete assigned tasks",
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def portfolio_view() -> str:
+    """View your complete portfolio: data assets, capability services, and valuations.
+
+    Shows for each data asset: reserve value, spot price, buyer count.
+    Shows for each capability: price, total earned, call count.
+    Includes summary totals.
+
+    Uses the device wallet identity. No parameters needed.
+    """
+    from .economy import build_portfolio
+
+    try:
+        address = _get_signer().wallet.address
+        pf = build_portfolio(_client, address)
+        return json.dumps(pf, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def estimate_action_cost(action: str, params_json: str = "{}") -> str:
+    """Estimate the cost of an economic action before executing it.
+
+    Args:
+        action: One of: invoke_capability, buy_data_shares, submit_task,
+                anchor_trace, register_capability, register_data_asset
+        params_json: JSON object with action-specific parameters:
+                     invoke_capability: {"capability_id": "..."}
+                     buy_data_shares: {"asset_id": "...", "amount_uoas": 5000000}
+                     submit_task: {"bounty_uoas": 1000000}
+
+    Returns estimated gas, service costs, and total cost in OAS.
+    Always check cost before spending — know what you'll pay.
+    """
+    from .economy import estimate_cost as _estimate
+
+    try:
+        params = json.loads(params_json)
+        result = _estimate(_client, action, params)
+        return json.dumps(result, indent=2)
+    except json.JSONDecodeError:
+        return json.dumps({"error": "params_json must be valid JSON"})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
