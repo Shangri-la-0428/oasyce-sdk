@@ -691,8 +691,36 @@ def _configure_oasyce_mcp() -> list[str]:
     return configured
 
 
+# ---------------------------------------------------------------------------
+# PyPI version check (non-blocking)
+# ---------------------------------------------------------------------------
+
+def _check_pypi_update() -> str | None:
+    """Check PyPI for a newer oasyce-sdk version. Returns hint string or None."""
+    import threading
+    from importlib.metadata import version as _installed_version
+
+    result: list[str | None] = [None]
+
+    def _check():
+        try:
+            current = _installed_version("oasyce-sdk")
+            with urlopen("https://pypi.org/pypi/oasyce-sdk/json", timeout=3) as resp:
+                latest = json.loads(resp.read()).get("info", {}).get("version", "")
+            if latest and latest != current:
+                result[0] = f"Update available: {current} -> {latest}  (pip install -U oasyce-sdk)"
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_check, daemon=True)
+    t.start()
+    t.join(timeout=4)  # wait at most 4s, don't block startup
+    return result[0]
+
+
 def cmd_start(args) -> None:
     print("Oasyce — starting local stack\n")
+    update_hint = _check_pypi_update()
     agent_cli._setup_identity(prompt_if_missing=True)
     config_path = agent_cli._ensure_default_agent_config()
 
@@ -729,6 +757,9 @@ def cmd_start(args) -> None:
         for issue in issues:
             print(f"  - {issue}")
 
+    if update_hint:
+        print(f"\n{update_hint}")
+
     print("\nRun `oasyce status` to inspect the full local stack.")
     sys.exit(0 if running else 1)
 
@@ -752,6 +783,7 @@ def cmd_share(args) -> None:
 
 
 def cmd_join(args) -> None:
+    update_hint = _check_pypi_update()
     raw_file = args.file or str(_default_share_path())
     connection_file = str(Path(raw_file).expanduser())
     _run_checked(
@@ -794,6 +826,9 @@ def cmd_join(args) -> None:
         print("\nWarnings:")
         for issue in issues:
             print(f"  - {issue}")
+
+    if update_hint:
+        print(f"\n{update_hint}")
 
     sys.exit(0 if running else 1)
 

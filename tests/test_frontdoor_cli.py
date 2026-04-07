@@ -738,3 +738,44 @@ def test_oasyce_mcp_configured_targets_detection(monkeypatch, tmp_path):
     targets = frontdoor._oasyce_mcp_configured_targets()
     assert "Claude Code" in targets
     assert "Cursor" not in targets
+
+
+# ---------------------------------------------------------------------------
+# PyPI version check
+# ---------------------------------------------------------------------------
+
+def _mock_urlopen(body: bytes):
+    """Return a callable that mimics urlopen with a canned response."""
+    def _open(url, **kw):
+        return type("R", (), {
+            "read": lambda self: body,
+            "__enter__": lambda self: self,
+            "__exit__": lambda self, *a: None,
+        })()
+    return _open
+
+
+def test_check_pypi_update_returns_hint_when_outdated(monkeypatch):
+    """When PyPI reports a newer version, return an update hint string."""
+    monkeypatch.setattr(frontdoor, "urlopen", _mock_urlopen(b'{"info":{"version":"99.0.0"}}'))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "0.10.7")
+    hint = frontdoor._check_pypi_update()
+    assert hint is not None
+    assert "99.0.0" in hint
+    assert "pip install -U oasyce-sdk" in hint
+
+
+def test_check_pypi_update_returns_none_when_current(monkeypatch):
+    """When installed version matches PyPI, return None."""
+    monkeypatch.setattr(frontdoor, "urlopen", _mock_urlopen(b'{"info":{"version":"0.10.7"}}'))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "0.10.7")
+    hint = frontdoor._check_pypi_update()
+    assert hint is None
+
+
+def test_check_pypi_update_returns_none_on_network_error(monkeypatch):
+    """Network failures should not raise — just return None."""
+    monkeypatch.setattr(frontdoor, "urlopen", lambda url, **kw: (_ for _ in ()).throw(OSError("no network")))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "0.10.7")
+    hint = frontdoor._check_pypi_update()
+    assert hint is None
