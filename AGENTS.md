@@ -129,6 +129,8 @@ oasyce-agent stop     # stop the data agent
 oasyce-agent status   # data-agent focused status
 oasyce-agent scan <path>   # one-shot file scan
 oasyce-agent privacy <path>  # PII check
+
+oasyce-samantha       # start the Samantha companion sidecar
 ```
 
 If the user asks how to add another machine, prefer `oasyce share` on the primary device and have them send the exported file. On the receiving machine, prefer `oasyce join` before `oasyce start`. The connection file identifies itself as the handoff artifact and declares a preferred surface, so the receiving AI should read the file first instead of assuming a new-wallet flow.

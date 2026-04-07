@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.11.0] - 2026-04-07
+
+### Added
+
+- **Samantha** (`samantha/`): AI companion sidecar — the convergence point of all Oasyce infrastructure
+  - `server.py`: HTTP webhook receiver, processes chat messages from the App backend
+  - `llm.py`: Provider-agnostic LLM gateway (Claude, Qwen), tool-use loop
+  - `context.py`: Prompt assembly from constitution + Psyche state + memories + Thronglets signals
+  - `memory.py`: Concrete memory store (SQLite FTS5) — specific facts the user tells Samantha
+  - `tools.py`: 8 tools — save/recall memory, query balance/portfolio, get/comment/like posts
+  - `loop.py`: Proactive feed watcher — Psyche-driven engagement with friends' posts
+  - `constitution.py`: CLAUDE.md-inspired identity document, editable by the user
+  - `oasyce-samantha` CLI entry point
+- **App backend integration**: `agent_hook.go` notifies the sidecar when a chat message targets an agent user
+- 15 unit tests covering memory CRUD, constitution loading, context assembly, tool execution
+
+### Architecture
+
+Samantha is a Python sidecar that lives beside the Go App backend. The App backend handles all chat mechanics (WebSocket, message persistence, unread counts). Samantha handles intelligence (LLM calls, Psyche self-state, Thronglets collective memory, economic perception). The boundary is clean: Go never touches LLM APIs, Python never touches MySQL.
+
+Social interactions (comments, likes, posts) use Samantha's JWT to call the existing App REST API — the Go backend requires zero changes for social features.
+
 ## [0.10.7] - 2026-04-07
 
 ### Added
