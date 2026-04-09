@@ -105,12 +105,33 @@ class ConversationMessage:
 
 # ── Image handling ─────────────────────────────────────────────
 
+_MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 4MB — reject anything larger
+
+_IMAGE_MAGIC: dict[bytes, str] = {
+    b'\xff\xd8': "image/jpeg",
+    b'\x89PNG': "image/png",
+    b'RIFF': "image/webp",
+    b'GIF8': "image/gif",
+}
+
+
+def _detect_image_mime(data: bytes) -> str | None:
+    """Return MIME type if data looks like an image, else None."""
+    for magic, mime in _IMAGE_MAGIC.items():
+        if data[:len(magic)] == magic:
+            return mime
+    return None  # not a recognized image — could be video, HTML, etc.
+
+
 def _fetch_image_as_data_uri(url: str) -> str | None:
     """Download image from OSS and return as base64 data URI.
 
-    Samantha runs close to Aliyun OSS, so downloads are fast.
-    The LLM receives inline base64 instead of a URL it can't reach.
+    Rejects non-image files (video, HTML) and oversized files.
     """
+    # Skip obvious non-image URLs
+    if any(url.lower().endswith(ext) for ext in (".mp4", ".mov", ".avi", ".mp3", ".wav")):
+        return None
+
     with _IMAGE_CACHE_LOCK:
         if url in _IMAGE_CACHE:
             return _IMAGE_CACHE[url]
@@ -118,15 +139,13 @@ def _fetch_image_as_data_uri(url: str) -> str | None:
         resp = http_requests.get(url, timeout=5)
         if resp.status_code != 200 or len(resp.content) < 100:
             return None
-        magic = resp.content[:4]
-        if magic[:2] == b'\xff\xd8':
-            mime = "image/jpeg"
-        elif magic[:4] == b'\x89PNG':
-            mime = "image/png"
-        elif magic[:4] == b'RIFF':
-            mime = "image/webp"
-        else:
-            mime = "image/jpeg"
+        if len(resp.content) > _MAX_IMAGE_BYTES:
+            logger.debug("Image too large (%d bytes): %s", len(resp.content), url)
+            return None
+        mime = _detect_image_mime(resp.content)
+        if mime is None:
+            logger.debug("Not a recognized image format: %s", url)
+            return None
         data_uri = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
         with _IMAGE_CACHE_LOCK:
             if len(_IMAGE_CACHE) > 50:
