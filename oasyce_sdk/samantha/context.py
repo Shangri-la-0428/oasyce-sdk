@@ -105,7 +105,9 @@ class ConversationMessage:
 
 # ── Image handling ─────────────────────────────────────────────
 
-_MAX_IMAGE_BYTES = 4 * 1024 * 1024  # 4MB — reject anything larger
+_MAX_IMAGE_BYTES = 512 * 1024  # 512KB — thumbnails only, never originals
+_THUMBNAIL_SUFFIX = "?x-oss-process=image/resize,w_400"  # Aliyun OSS thumbnail
+_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mp3", ".wav", ".webm", ".flv"}
 
 _IMAGE_MAGIC: dict[bytes, str] = {
     b'\xff\xd8': "image/jpeg",
@@ -120,40 +122,53 @@ def _detect_image_mime(data: bytes) -> str | None:
     for magic, mime in _IMAGE_MAGIC.items():
         if data[:len(magic)] == magic:
             return mime
-    return None  # not a recognized image — could be video, HTML, etc.
+    return None
+
+
+def _to_thumbnail(url: str) -> str:
+    """Append OSS thumbnail suffix if it's a cdn.oasyce.com image URL."""
+    if "?" in url or not url:
+        return url
+    if "cdn.oasyce.com" in url or "oss" in url:
+        return url + _THUMBNAIL_SUFFIX
+    return url
 
 
 def _fetch_image_as_data_uri(url: str) -> str | None:
-    """Download image from OSS and return as base64 data URI.
+    """Download thumbnail from OSS and return as base64 data URI.
 
-    Rejects non-image files (video, HTML) and oversized files.
+    Always requests thumbnails (w_400) instead of originals.
+    Rejects non-image files and anything over 512KB.
     """
-    # Skip obvious non-image URLs
-    if any(url.lower().endswith(ext) for ext in (".mp4", ".mov", ".avi", ".mp3", ".wav")):
+    # Skip video URLs
+    lower = url.lower().split("?")[0]
+    if any(lower.endswith(ext) for ext in _VIDEO_EXTS):
         return None
 
+    thumb_url = _to_thumbnail(url)
+
     with _IMAGE_CACHE_LOCK:
-        if url in _IMAGE_CACHE:
-            return _IMAGE_CACHE[url]
+        if thumb_url in _IMAGE_CACHE:
+            return _IMAGE_CACHE[thumb_url]
     try:
-        resp = http_requests.get(url, timeout=5)
+        resp = http_requests.get(thumb_url, timeout=5)
         if resp.status_code != 200 or len(resp.content) < 100:
             return None
         if len(resp.content) > _MAX_IMAGE_BYTES:
-            logger.debug("Image too large (%d bytes): %s", len(resp.content), url)
+            logger.debug("Image too large (%d bytes): %s", len(resp.content), thumb_url)
             return None
         mime = _detect_image_mime(resp.content)
         if mime is None:
-            logger.debug("Not a recognized image format: %s", url)
+            logger.debug("Not a recognized image format: %s", thumb_url)
             return None
         data_uri = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
         with _IMAGE_CACHE_LOCK:
             if len(_IMAGE_CACHE) > 50:
                 _IMAGE_CACHE.clear()
-            _IMAGE_CACHE[url] = data_uri
+            _IMAGE_CACHE[thumb_url] = data_uri
         return data_uri
     except Exception:
-        logger.debug("Failed to fetch image: %s", url, exc_info=True)
+        logger.debug("Failed to fetch image: %s", thumb_url, exc_info=True)
         return None
 
 
