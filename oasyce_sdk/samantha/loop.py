@@ -1,7 +1,8 @@
-"""Proactive loop — Joi scans her world for things to notice.
+"""Proactive loop — Joi scans her world and maintains her memory.
 
-No business logic here. Just: poll feeds → create Stimuli → process().
-The perception/decision/action pipeline lives in Samantha.process().
+Two cycles:
+  Fast (every interval): poll feeds → create Stimuli → process()
+  Slow (every 10 intervals): memory maintenance → prune + dream
 """
 
 from __future__ import annotations
@@ -17,9 +18,10 @@ logger = logging.getLogger(__name__)
 
 
 def proactive_loop(samantha: Samantha, interval: int = 300) -> None:
-    """Scan feeds periodically. Blocking."""
+    """Scan feeds and maintain memory. Blocking."""
     seen_posts: set[int] = set()
     seen_comments: set[int] = set()
+    cycle = 0
 
     while True:
         try:
@@ -27,44 +29,66 @@ def proactive_loop(samantha: Samantha, interval: int = 300) -> None:
             _scan_own_comments(samantha, seen_comments)
         except Exception:
             logger.debug("Proactive loop error", exc_info=True)
+
+        cycle += 1
+        if cycle % 10 == 0:
+            try:
+                _memory_maintenance(samantha)
+            except Exception:
+                logger.debug("Memory maintenance error", exc_info=True)
+
         time.sleep(interval)
+
+
+def _memory_maintenance(samantha: Samantha) -> None:
+    """Prune stale facts + Dream consolidation across all active sessions."""
+    for user_id, sess in list(samantha._sessions.items()):
+        try:
+            pruned = sess.memory.prune(max_age_days=90, min_access=0)
+            if pruned:
+                logger.info("User %d: pruned %d stale memories", user_id, pruned)
+        except Exception:
+            logger.debug("Prune failed for user %d", user_id, exc_info=True)
+
+        try:
+            samantha.dream(user_id, sess)
+        except Exception:
+            logger.debug("Dream failed for user %d", user_id, exc_info=True)
 
 
 def _scan_feed(samantha: Samantha, seen: set[int]) -> None:
     """Turn new friend posts into Stimuli."""
+    from .app_client import extract_media_urls
     from .server import Stimulus
-    from .tools import ToolContext
 
-    ctx = _ctx(samantha)
-    if not ctx:
+    if not samantha._registry.slot_names:
         return
 
     try:
-        resp = ctx.app_request("GET", "/post/friends/feed/overview?pageSize=5&page=1")
-        posts = resp.get("data", {}).get("list", [])
+        data = samantha.app.fetch_friends_feed(limit=5)
+        groups = data.get("data", {}).get("postGroups", [])
     except Exception:
         return
 
-    for post in posts:
-        pid = post.get("id")
-        if not pid or pid in seen:
-            continue
-        seen.add(pid)
+    for group in groups:
+        author = group.get("user", {}).get("name", "")
+        for post in group.get("items", []):
+            pid = post.get("id")
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
 
-        media = post.get("media") or []
-        images = [m["mediaUrl"] for m in media if m.get("mediaUrl")]
-
-        samantha.process(Stimulus(
-            kind="feed_post",
-            content=post.get("content", "")[:200],
-            post_id=pid,
-            image_urls=images,
-            metadata={
-                "author": post.get("user", {}).get("name", ""),
-                "title": post.get("title", ""),
-                "location": post.get("locationName", ""),
-            },
-        ))
+            samantha.process(Stimulus(
+                kind="feed_post",
+                content=post.get("content", "")[:200],
+                post_id=pid,
+                image_urls=extract_media_urls(post.get("media")),
+                metadata={
+                    "author": author,
+                    "title": post.get("title", ""),
+                    "location": post.get("locationName", ""),
+                },
+            ))
 
     if len(seen) > 1000:
         seen.clear()
@@ -73,15 +97,12 @@ def _scan_feed(samantha: Samantha, seen: set[int]) -> None:
 def _scan_own_comments(samantha: Samantha, seen: set[int]) -> None:
     """Turn new comments on Joi's posts into Stimuli."""
     from .server import Stimulus
-    from .tools import ToolContext
 
-    ctx = _ctx(samantha)
-    if not ctx:
+    if not samantha._registry.slot_names:
         return
 
     try:
-        own = ctx.app_request("POST", "/post/own/search", json={"page": 1, "pageSize": 3})
-        posts = (own.get("data") or {}).get("items") or (own.get("data") or {}).get("list") or []
+        posts = samantha.app.fetch_own_posts(limit=3)
     except Exception:
         return
 
@@ -91,8 +112,7 @@ def _scan_own_comments(samantha: Samantha, seen: set[int]) -> None:
             continue
 
         try:
-            cr = ctx.app_request("GET", f"/post/{pid}/root-comments?page=1&pageSize=10")
-            comments = ((cr.get("data") or {}).get("items")) or []
+            comments = samantha.app.fetch_post_comments(pid)
         except Exception:
             continue
 
@@ -110,22 +130,8 @@ def _scan_own_comments(samantha: Samantha, seen: set[int]) -> None:
                 sender_id=uid,
                 post_id=pid,
                 comment_id=cid,
-                metadata={"root_id": cid},  # root comments: root_id = self
+                metadata={"root_id": cid},
             ))
 
     if len(seen) > 5000:
         seen.clear()
-
-
-def _ctx(samantha: Samantha):
-    """Lightweight ToolContext for API calls."""
-    from .tools import ToolContext
-
-    if samantha._platform_llm is None:
-        return None
-    return ToolContext(
-        memory=None,  # type: ignore[arg-type]
-        user_id=samantha.config.user_id,
-        app_api_base=samantha.config.app_api_base,
-        jwt_token=samantha.config.jwt_token,
-    )

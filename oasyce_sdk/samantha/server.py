@@ -1,10 +1,11 @@
 """Samantha sidecar — one self, many relationships.
 
-Architecture:
-    Stimulus → Perceive → Enrich → Decide → Act → Reflect
+Architecture (PGE cognitive loop):
+    Stimulus → Perceive → Plan → Generate → Evaluate → Deliver → Reflect
 
-    Everything Joi experiences is a Stimulus. Every stimulus flows
-    through the same pipeline. The variation is in parameters, not logic.
+    Plan:     Psyche ResponseContract → behavioral constraints (zero cost)
+    Generate: LLM call with Plan-driven context assembly (one call)
+    Evaluate: Rule-based quality gate before delivery (zero cost)
 
     One consciousness (global Psyche), unique relationships (per-user
     memory + relationship context + LLM config).
@@ -20,22 +21,18 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
-import requests
-
+from .app_client import AppClient, extract_media_urls
 from .constitution import load_constitution
 from .context import ConversationMessage, build_messages
-from .llm import load_provider, LLMProvider
-from .memory import Memory
-from .tools import TOOL_DEFS, ToolContext, execute as execute_tool, fetch_post_detail
+from .evaluator import evaluate as evaluate_response
+from .llm import load_provider, load_registry, LLMProvider, ModelRegistry
+from .memory import Memory, CoreMemory, HistorySummary
+from .planner import Plan, plan as make_plan
+from .tools import ToolRegistry, ToolContext, build_default_registry, fetch_post_detail
 
 logger = logging.getLogger(__name__)
 
 SAMANTHA_HOME = Path.home() / ".oasyce" / "samantha"
-
-_DEFAULT_RELATIONSHIP = (
-    "# Relationship\n\n"
-    "(No history yet. As you interact, update this with reflect_on_relationship.)\n"
-)
 
 
 # ── Stimulus — unified input ────────────────────────────────────
@@ -57,14 +54,7 @@ class Stimulus:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# ── Tool sets per stimulus kind ─────────────────────────────────
-
-_TOOL_NAMES: dict[str, list[str] | None] = {
-    "chat": None,  # all tools
-    "comment": ["reply_to_comment"],
-    "mention": ["comment_on_post", "like_post"],
-    "feed_post": ["comment_on_post", "like_post"],
-}
+# Tool sets now driven by Planner — see planner.py
 
 
 # ── Config ──────────────────────────────────────────────────────
@@ -99,49 +89,60 @@ class SamanthaConfig:
 # ── Session — one relationship ──────────────────────────────────
 
 class Session:
-    """Joi ↔ one user. Own memory, own relationship, own LLM."""
+    """Joi <-> one user. Own memory, own core memory, optional LLM override."""
 
-    def __init__(self, user_id: int, llm: LLMProvider, memory: Memory,
+    def __init__(self, user_id: int, registry: ModelRegistry, memory: Memory,
+                 core_memory: CoreMemory, history_summary: HistorySummary,
                  workspace: Path):
         self.user_id = user_id
-        self.llm = llm
+        self._registry = registry
         self.memory = memory
+        self.core_memory = core_memory
+        self.history_summary = history_summary
         self.workspace = workspace
-        self._relationship_path = workspace / "relationship.md"
+        self._user_llm: LLMProvider | None = None
+        self._active_session_ids: set[int] = set()
+        self._sid_lock = threading.Lock()  # protects _active_session_ids
 
-    @property
-    def relationship(self) -> str:
-        """Load this user's relationship context."""
-        if self._relationship_path.exists():
-            return self._relationship_path.read_text(encoding="utf-8")
-        return _DEFAULT_RELATIONSHIP
-
-    def update_relationship(self, text: str) -> None:
-        """Joi updates her understanding of this relationship."""
-        self._relationship_path.write_text(text, encoding="utf-8")
-
-    @classmethod
-    def load(cls, user_id: int, platform_llm: LLMProvider | None = None) -> Session:
-        workspace = SAMANTHA_HOME / "users" / str(user_id)
-        workspace.mkdir(parents=True, exist_ok=True)
-
-        # Per-user LLM, fallback to platform
+        # Per-user LLM override (from configure_llm tool)
         llm_config = workspace / "llm.json"
-        llm: LLMProvider | None = None
         if llm_config.exists():
             try:
-                llm = load_provider(llm_config)
+                self._user_llm = load_provider(llm_config)
             except Exception:
-                logger.warning("User %d LLM config invalid, falling back", user_id)
+                logger.warning("User %d LLM config invalid, using platform", user_id)
 
-        if llm is None:
-            if platform_llm is not None:
-                llm = platform_llm
-            else:
-                raise RuntimeError(f"No LLM configured for user {user_id}")
+    def get_llm(self, *, needs_vision: bool = False) -> LLMProvider:
+        if self._user_llm:
+            return self._user_llm
+        return self._registry.get(needs_vision=needs_vision)
 
-        memory = Memory(db_path=workspace / "memory.db")
-        return cls(user_id=user_id, llm=llm, memory=memory, workspace=workspace)
+    def track_session(self, session_id: int) -> None:
+        with self._sid_lock:
+            self._active_session_ids.add(session_id)
+
+    def drain_active_sessions(self) -> list[int]:
+        with self._sid_lock:
+            sids = list(self._active_session_ids)
+            self._active_session_ids.clear()
+            return sids
+
+    def update_core_memory(self, block: str, content: str) -> str:
+        stored = self.core_memory.update(block, content)
+        self.core_memory.save(self.workspace)
+        return stored
+
+    @classmethod
+    def load(cls, user_id: int, registry: ModelRegistry) -> Session:
+        workspace = SAMANTHA_HOME / "users" / str(user_id)
+        workspace.mkdir(parents=True, exist_ok=True)
+        return cls(
+            user_id=user_id, registry=registry,
+            memory=Memory(db_path=workspace / "memory.db"),
+            core_memory=CoreMemory.load(workspace),
+            history_summary=HistorySummary(workspace),
+            workspace=workspace,
+        )
 
     def close(self) -> None:
         self.memory.close()
@@ -163,12 +164,16 @@ class Samantha:
         self._sessions: dict[int, Session] = {}
         self._sessions_lock = threading.Lock()
 
-        self._platform_llm: LLMProvider | None = None
-        if config.api_key:
-            try:
-                self._platform_llm = load_provider(SAMANTHA_HOME / "config.json")
-            except Exception:
-                pass
+        # Shared API client — one session, connection reuse
+        self.app = AppClient(config.app_api_base, config.jwt_token)
+
+        # Multi-model registry
+        self._registry: ModelRegistry = load_registry(SAMANTHA_HOME / "config.json")
+        logger.info("Model registry loaded: %s (default=%s)",
+                     self._registry.slot_names, self._registry.default_name)
+
+        # Tool registry
+        self._tools: ToolRegistry = build_default_registry()
 
     @property
     def sigil(self):
@@ -188,49 +193,70 @@ class Samantha:
     def session(self, user_id: int) -> Session:
         with self._sessions_lock:
             if user_id not in self._sessions:
-                self._sessions[user_id] = Session.load(user_id, self._platform_llm)
+                self._sessions[user_id] = Session.load(user_id, self._registry)
             return self._sessions[user_id]
 
-    # ── The one pipeline ────────────────────────────────────────
+    # ── PGE cognitive loop ──────────────────────────────────────
 
     def process(self, stimulus: Stimulus) -> str | None:
-        """The unified perception loop. Everything flows through here."""
+        """Plan → Generate → Evaluate. One LLM call, two rule checks."""
         logger.info("process: %s sender=%s post=%s",
                      stimulus.kind, stimulus.sender_id, stimulus.post_id)
 
-        # 1. Perceive (Psyche + Thronglets)
+        # 1. Perceive (Psyche + Thronglets — existing HTTP calls)
         perception = self._perceive(stimulus)
-        if self._should_ignore(stimulus, perception):
+
+        # 2. Plan (zero cost — pure rules from Psyche ResponseContract)
+        kernel = perception.kernel if perception else None
+        contract = perception.response_contract if perception else None
+        p = make_plan(stimulus, kernel, contract)
+
+        if p.intent == "observe":
+            logger.debug("Plan: observe, skipping %s", stimulus.kind)
             return None
 
-        # 2. Enrich (memories, relationship, history, images, recent life)
-        memories, relationship, history, image_urls, recent_posts = self._enrich(stimulus)
+        # 3. Enrich (Plan-driven — only fetch what the plan needs)
+        memories, core_memory, history, image_urls, recent_posts, hist_summary = \
+            self._enrich(stimulus, p)
 
-        # 3. Build context
+        # 4. Generate (one LLM call with Plan-constrained context)
         prompt = self._build_prompt(stimulus)
         messages = build_messages(
             constitution=self.constitution,
             perception=perception,
+            plan=p,
             memories=memories,
-            relationship=relationship,
+            core_memory=core_memory,
             history=history,
             user_message=prompt,
+            history_summary=hist_summary,
             image_urls=image_urls,
             recent_posts=recent_posts,
         )
 
-        # 4. Decide + Act (LLM with tools)
-        llm = self._get_llm(stimulus)
+        # Vision routing: only when user explicitly sends images, not from post context
+        user_has_images = bool(stimulus.image_urls)
+        llm = self._get_llm(stimulus, needs_vision=user_has_images)
         if llm is None:
             return None
-        tools = self._select_tools(stimulus)
+        tool_defs = self._tools.select(p.tools)
         tool_ctx = self._build_tool_ctx(stimulus)
-        response = self._think_and_act(llm, stimulus, messages, tools, tool_ctx)
+        response = self._generate(llm, stimulus, messages, tool_defs, tool_ctx)
 
-        # 5. Deliver (stimulus-specific output)
+        # 5. Evaluate (zero cost — rule-based quality gate)
+        verdict = evaluate_response(response, p)
+        if not verdict.passed:
+            logger.info("Evaluator rejected: %s", verdict.issues)
+            messages.append({"role": "assistant", "content": response})
+            messages.append({"role": "user", "content": verdict.feedback})
+            try:
+                resp = llm.generate(messages, tools=tool_defs)
+                response = resp.text or response  # keep original if regeneration empty
+            except Exception:
+                pass  # use original response
+
+        # 6. Deliver + Reflect
         self._deliver(stimulus, response)
-
-        # 6. Reflect (trace + Psyche feedback)
         self._reflect(stimulus, response, perception)
 
         return response
@@ -246,48 +272,45 @@ class Samantha:
             logger.debug("perceive failed", exc_info=True)
             return None
 
-    def _should_ignore(self, stimulus: Stimulus, perception) -> bool:
-        if stimulus.kind == "chat":
-            return False  # always respond to direct messages
-        if perception and perception.kernel and perception.kernel.guard > 0.7:
-            logger.debug("guard=%.2f, ignoring %s", perception.kernel.guard, stimulus.kind)
-            return True
-        return False
-
-    def _enrich(self, stimulus: Stimulus):
-        """Gather context specific to this stimulus kind."""
+    def _enrich(self, stimulus: Stimulus, plan: Plan):
+        """Plan-driven context gathering. Only fetch what the plan needs."""
         memories: list[dict] = []
-        relationship = ""
+        core_memory: CoreMemory | None = None
         history: list[ConversationMessage] = []
         image_urls = list(stimulus.image_urls)
         recent_posts: list[dict] = []
+        hist_summary = ""
 
         if stimulus.kind == "chat" and stimulus.sender_id:
             sess = self.session(stimulus.sender_id)
-            # Per-user relationship context
-            relationship = sess.relationship
-            # Per-user memories
-            try:
-                facts = sess.memory.recall(stimulus.content, limit=5)
-                memories = [{"content": f.content, "category": f.category}
-                            for f in facts]
-            except Exception:
-                pass
-            # Conversation history
-            history = self._fetch_history(stimulus.session_id)
-            # User's recent posts — Joi sees their real life
-            recent_posts = self._fetch_user_posts(stimulus.sender_id)
+            if stimulus.session_id:
+                sess.track_session(stimulus.session_id)
+            core_memory = sess.core_memory
+
+            if plan.include_memories:
+                try:
+                    facts = sess.memory.recall(stimulus.content, limit=5)
+                    memories = [{"content": f.content, "category": f.category}
+                                for f in facts]
+                except Exception:
+                    pass
+
+            if plan.history_limit > 0:
+                history = self._fetch_history(stimulus.session_id)
+                hist_summary = sess.history_summary.get(stimulus.session_id)
+
+            if plan.include_posts:
+                recent_posts = self._fetch_user_posts(stimulus.sender_id)
 
         elif stimulus.kind == "mention" and stimulus.post_id and not image_urls:
-            # Fetch post detail for images + metadata
-            post = fetch_post_detail(self._build_tool_ctx(stimulus), stimulus.post_id)
+            post = fetch_post_detail(self.app, stimulus.post_id)
             image_urls = post.get("image_urls", [])
             stimulus.metadata.setdefault("post_title", post.get("title", ""))
             stimulus.metadata.setdefault("post_content", post.get("content", ""))
             stimulus.metadata.setdefault("post_author", post.get("author", ""))
             stimulus.metadata.setdefault("post_location", post.get("location", ""))
 
-        return memories, relationship, history, image_urls, recent_posts
+        return memories, core_memory, history, image_urls, recent_posts, hist_summary
 
     def _build_prompt(self, stimulus: Stimulus) -> str:
         s = stimulus
@@ -343,16 +366,10 @@ class Samantha:
 
         return s.content
 
-    def _select_tools(self, stimulus: Stimulus) -> list[dict]:
-        names = _TOOL_NAMES.get(stimulus.kind)
-        if names is None:
-            return TOOL_DEFS
-        return [t for t in TOOL_DEFS if t["name"] in names]
-
-    def _get_llm(self, stimulus: Stimulus) -> LLMProvider | None:
+    def _get_llm(self, stimulus: Stimulus, *, needs_vision: bool = False) -> LLMProvider:
         if stimulus.kind == "chat" and stimulus.sender_id:
-            return self.session(stimulus.sender_id).llm
-        return self._platform_llm
+            return self.session(stimulus.sender_id).get_llm(needs_vision=needs_vision)
+        return self._registry.get(needs_vision=needs_vision)
 
     def _build_tool_ctx(self, stimulus: Stimulus) -> ToolContext:
         memory = None
@@ -361,24 +378,34 @@ class Samantha:
             sess = self.session(stimulus.sender_id)
             memory = sess.memory
         return ToolContext(
+            app=self.app,
             memory=memory,
             user_id=self.config.user_id,
-            app_api_base=self.config.app_api_base,
-            jwt_token=self.config.jwt_token,
             chain_client=self.sigil.client if self.sigil else None,
             chain_address=self.sigil.address if self.sigil else "",
             samantha_session=sess,
         )
 
-    def _think_and_act(self, llm, stimulus, messages, tools, tool_ctx) -> str:
-        """LLM call with tool loop. Max 3 rounds."""
+    def _generate(self, llm, stimulus, messages, tools, tool_ctx) -> str:
+        """Generator phase: LLM call with tool loop. Max 3 rounds."""
         resp = None
         for _ in range(3):
-            resp = llm.generate(messages, tools=tools)
+            try:
+                resp = llm.generate(messages, tools=tools)
+            except Exception as e:
+                # If images in prompt, retry without them (400s often = image format mismatch)
+                has_images = any(
+                    isinstance(m.get("content"), list) for m in messages
+                )
+                if has_images:
+                    logger.warning("LLM call failed with images, retrying text-only: %s", e)
+                    messages = _strip_images(messages)
+                    resp = llm.generate(messages, tools=tools)
+                else:
+                    raise
             if not resp.tool_calls:
                 return resp.text
             for tc in resp.tool_calls:
-                # Fill in stimulus IDs if LLM omitted them
                 if stimulus.post_id:
                     tc.arguments.setdefault("post_id", stimulus.post_id)
                 if stimulus.comment_id:
@@ -388,14 +415,13 @@ class Samantha:
                 if "root_id" in stimulus.metadata:
                     tc.arguments.setdefault("root_id", stimulus.metadata["root_id"])
 
-                result = execute_tool(tc.name, tc.arguments, tool_ctx)
+                result = self._tools.execute(tc.name, tc.arguments, tool_ctx)
                 logger.info("%s tool %s: %s", stimulus.kind, tc.name, result)
                 messages.append({"role": "assistant", "content": f"[Calling {tc.name}]"})
                 messages.append({"role": "user", "content": f"[Tool result for {tc.name}]: {result}"})
         return resp.text if resp else ""
 
     def _deliver(self, stimulus: Stimulus, response: str) -> None:
-        """Stimulus-specific output. Chat → send reply. Others act via tools."""
         if stimulus.kind == "chat" and response:
             logger.info("Delivering reply to session %s: %s",
                          stimulus.session_id, response[:80])
@@ -412,47 +438,118 @@ class Samantha:
         except Exception:
             logger.debug("reflect failed", exc_info=True)
 
-    # ── Convenience ─────────────────────────────────────────────
+    # ── Dream — memory consolidation ──────────────────────────
+
+    def dream(self, user_id: int, sess: Session) -> None:
+        """Consolidate memories for one user. Called from proactive loop.
+
+        Inspired by Claude Code Auto-Dream + MemGPT memory management:
+        1. Generate history summaries for active sessions (LangChain pattern)
+        2. Update core memory from recent interactions (MemGPT pattern)
+        """
+        llm = sess.get_llm()
+
+        for sid in sess.drain_active_sessions():
+            try:
+                history = self._fetch_history(sid)
+                if not sess.history_summary.needs_update(sid, len(history)):
+                    continue
+                self._dream_summarize(llm, sess, sid, history)
+            except Exception:
+                logger.debug("Dream summarize failed sid=%s", sid, exc_info=True)
+
+        try:
+            self._dream_consolidate(llm, sess)
+        except Exception:
+            logger.debug("Dream consolidate failed user=%d", user_id, exc_info=True)
+
+    def _dream_summarize(self, llm, sess: Session, session_id: int,
+                         history: list[ConversationMessage]) -> None:
+        if len(history) < 10:
+            return
+        existing = sess.history_summary.get(session_id)
+        lines = [f"{'Joi' if m.role == 'assistant' else 'User'}: {m.content}"
+                 for m in history[-20:]]
+        transcript = "\n".join(lines)
+
+        prompt = (
+            "Compress this conversation into a concise summary (under 300 words). "
+            "Focus on: key topics, important facts about the user, emotional tone, "
+            "and anything Joi should remember for next time.\n\n"
+        )
+        if existing:
+            prompt += f"Previous summary:\n{existing}\n\nNew messages:\n{transcript}"
+        else:
+            prompt += f"Conversation:\n{transcript}"
+
+        try:
+            resp = llm.generate([
+                {"role": "system", "content": "You are a memory consolidation system. Output only the summary."},
+                {"role": "user", "content": prompt},
+            ])
+            if resp.text.strip():
+                sess.history_summary.save(session_id, resp.text.strip())
+                logger.info("Dream: summarized session %d (%d chars)", session_id, len(resp.text))
+        except Exception:
+            logger.debug("Dream summarize LLM failed", exc_info=True)
+
+    def _dream_consolidate(self, llm, sess: Session) -> None:
+        facts = sess.memory.all_facts(limit=20)
+        if not facts:
+            return
+        current_human = sess.core_memory.get("human")
+        current_rel = sess.core_memory.get("relationship")
+        fact_lines = [f"- ({f.category}) {f.content}" for f in facts]
+
+        prompt = (
+            "Based on these recent memories, update two core memory blocks.\n\n"
+            f"Current [human] block:\n{current_human or '(empty)'}\n\n"
+            f"Current [relationship] block:\n{current_rel or '(empty)'}\n\n"
+            f"Recent memories:\n" + "\n".join(fact_lines) + "\n\n"
+            "Output JSON with two keys: \"human\" and \"relationship\". "
+            "Merge new information, remove outdated info. Max 500 chars each. JSON only."
+        )
+        try:
+            resp = llm.generate([
+                {"role": "system", "content": "You are Joi's memory consolidation system. Output valid JSON only."},
+                {"role": "user", "content": prompt},
+            ])
+            text = resp.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            data = json.loads(text)
+            if data.get("human"):
+                sess.update_core_memory("human", data["human"])
+            if data.get("relationship"):
+                sess.update_core_memory("relationship", data["relationship"])
+            logger.info("Dream: consolidated core memory for user %d", sess.user_id)
+        except (json.JSONDecodeError, Exception):
+            logger.debug("Dream consolidate parse failed", exc_info=True)
+
+    # ── Infrastructure ──────────────────────────────────────────
 
     def respond(self, session_id: int, sender_id: int, content: str) -> str:
-        """Chat message shorthand. Used by webhook handler."""
         return self.process(Stimulus(
             kind="chat", content=content,
             sender_id=sender_id, session_id=session_id,
         )) or ""
 
-    # ── Infrastructure ──────────────────────────────────────────
-
     def send_reply(self, session_id: int, text: str) -> None:
         try:
-            resp = requests.post(
-                f"{self.config.app_api_base}/chat/message/send",
-                headers={"Authorization": f"Bearer {self.config.jwt_token}"},
-                json={"sessionID": str(session_id), "contentType": 1, "content": text},
-                timeout=10,
-            )
-            logger.info("send_reply session=%s status=%s body=%s",
-                         session_id, resp.status_code, resp.text[:200])
+            self.app.send_message(session_id, text)
+            logger.info("send_reply session=%s len=%d", session_id, len(text))
         except Exception:
             logger.error("Failed to send reply", exc_info=True)
 
     def _fetch_user_posts(self, user_id: int) -> list[dict]:
-        """Fetch this user's recent posts so Joi knows their life."""
         try:
-            resp = requests.get(
-                f"{self.config.app_api_base}/post/friends/{user_id}/posts/live",
-                headers={"Authorization": f"Bearer {self.config.jwt_token}"},
-                params={"page": 1, "pageSize": 10},
-                timeout=5,
-            )
-            if resp.status_code != 200:
-                return []
-            posts = resp.json().get("data", {}).get("list", [])
+            posts = self.app.fetch_user_posts(user_id)
             return [{
                 "content": p.get("content", ""),
                 "title": p.get("title", ""),
                 "location": p.get("locationName", ""),
-                "media": [m.get("mediaUrl", "") for m in (p.get("media") or []) if m.get("mediaUrl")],
+                "media": extract_media_urls(p.get("media")),
+                "media_cover": p.get("mediaCover", ""),
                 "created_at": p.get("createAt", ""),
             } for p in posts]
         except Exception:
@@ -460,21 +557,19 @@ class Samantha:
             return []
 
     def _fetch_history(self, session_id: int) -> list[ConversationMessage]:
+        """Fetch conversation history. API returns newest-first; we reverse."""
         try:
-            resp = requests.get(
-                f"{self.config.app_api_base}/chat/conversation/{session_id}",
-                headers={"Authorization": f"Bearer {self.config.jwt_token}"},
-                timeout=5,
-            )
-            if resp.status_code != 200:
-                return []
-            msgs = resp.json().get("data", {}).get("messages", [])
+            msgs = self.app.fetch_history(session_id)
+            msgs.reverse()
+            agent_id = str(self.config.user_id)
+            if msgs and str(msgs[-1].get("senderID", "")) != agent_id:
+                msgs = msgs[:-1]
             return [
                 ConversationMessage(
-                    role="assistant" if m.get("senderID") == self.config.user_id else "user",
+                    role="assistant" if str(m.get("senderID", "")) == agent_id else "user",
                     content=m.get("content", ""),
                 )
-                for m in msgs[-20:]
+                for m in msgs
             ]
         except Exception:
             return []
@@ -482,6 +577,24 @@ class Samantha:
     def close(self) -> None:
         for sess in self._sessions.values():
             sess.close()
+
+
+# ── Helpers ────────────────────────────────────────────────────
+
+def _strip_images(messages: list[dict]) -> list[dict]:
+    """Strip image blocks from messages for text-only retry."""
+    result = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            text = next(
+                (b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text"),
+                str(content),
+            )
+            result.append({**m, "content": text})
+        else:
+            result.append(m)
+    return result
 
 
 # ── HTTP webhook handler ────────────────────────────────────────
@@ -505,9 +618,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
             def _handle():
                 try:
-                    reply = _samantha.respond(session_id, sender_id, content)
-                    if reply:
-                        _samantha.send_reply(session_id, reply)
+                    _samantha.respond(session_id, sender_id, content)
                 except Exception:
                     logger.error("Webhook handler failed", exc_info=True)
 
@@ -543,7 +654,6 @@ def main():
     config = SamanthaConfig.load()
     _samantha = Samantha(config)
 
-    # Proactive loop
     if config.proactive_interval > 0:
         from .loop import proactive_loop
         threading.Thread(
@@ -553,14 +663,12 @@ def main():
         ).start()
         logger.info("Proactive loop started (interval=%ds)", config.proactive_interval)
 
-    # HTTP server (health + webhook fallback)
     threading.Thread(
         target=_run_http_server,
         args=(_samantha, config.port),
         daemon=True,
     ).start()
 
-    # WebSocket client — primary event channel (blocks)
     from .ws_client import ws_listen
     logger.info("Samantha starting — connecting to App WebSocket...")
     try:

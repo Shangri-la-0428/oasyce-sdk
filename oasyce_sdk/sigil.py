@@ -184,6 +184,7 @@ class SigilManager:
                 stimulus_type=pi.stimulus_type,
                 system_context=pi.system_context,
                 dynamic_context=pi.dynamic_context,
+                response_contract=pi.reply_envelope.response_contract,
             )
         except Exception:
             logger.debug("Psyche unavailable", exc_info=True)

@@ -20,6 +20,7 @@ from ..crypto.wallet import Wallet
 from ..identity import IdentityContext, IdentityResolver
 from .psyche_client import (
     PsycheClient,
+    ResponseContract,
     SubjectivityKernel,
     WritebackSignal,
 )
@@ -45,6 +46,7 @@ class Perception:
     stimulus_type: str = ""
     system_context: str = ""
     dynamic_context: str = ""
+    response_contract: ResponseContract | None = None
 
     @property
     def has_collective_experience(self) -> bool:
@@ -211,6 +213,7 @@ class AgentRuntime:
                 stimulus_type=pi.stimulus_type,
                 system_context=pi.system_context,
                 dynamic_context=pi.dynamic_context,
+                response_contract=pi.reply_envelope.response_contract,
             )
         except Exception:
             logger.debug("Psyche unavailable", exc_info=True)
