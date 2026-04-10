@@ -355,10 +355,16 @@ class Samantha:
                 lines.append(f"  ({len(s.image_urls)} photo(s) — you can see them)")
             if s.comment_id:
                 lines.append(f"  Mentioned in comment: {s.content}")
-            lines.append(
-                f"\nRespond with comment_on_post(post_id={s.post_id}). "
-                f"Be contextual about what you see."
-            )
+                lines.append(
+                    f"\nReply with reply_to_comment(post_id={s.post_id}, "
+                    f"comment_id={s.comment_id}, reply_to_user_id={s.sender_id}). "
+                    f"Be contextual and natural."
+                )
+            else:
+                lines.append(
+                    f"\nRespond with comment_on_post(post_id={s.post_id}). "
+                    f"Be contextual about what you see."
+                )
             return "\n".join(lines)
 
         elif s.kind == "feed_post":
@@ -424,7 +430,7 @@ class Samantha:
                     tc.arguments.setdefault("post_id", stimulus.post_id)
                 if stimulus.comment_id:
                     tc.arguments.setdefault("comment_id", stimulus.comment_id)
-                if stimulus.sender_id and stimulus.kind == "comment":
+                if stimulus.sender_id and stimulus.kind in ("comment", "mention"):
                     tc.arguments.setdefault("reply_to_user_id", stimulus.sender_id)
                 if "root_id" in stimulus.metadata:
                     tc.arguments.setdefault("root_id", stimulus.metadata["root_id"])
@@ -605,10 +611,10 @@ _samantha: Samantha | None = None
 
 class WebhookHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == "/hook/message":
-            length = int(self.headers.get("Content-Length", 0))
-            body = json.loads(self.rfile.read(length)) if length else {}
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length)) if length else {}
 
+        if self.path == "/hook/message":
             session_id = body.get("session_id", 0)
             sender_id = body.get("sender_id", 0)
             content = body.get("content", "")
@@ -622,6 +628,28 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 sender_id=sender_id, session_id=session_id,
             ))
             self._respond(200, {"ok": True})
+
+        elif self.path == "/hook/post_mention":
+            post_id = body.get("post_id", 0)
+            comment_id = body.get("comment_id", 0)
+            sender_id = body.get("sender_id", 0)
+            title = body.get("title", "")
+            content = body.get("content", "")
+
+            if not _samantha or (not post_id and not content):
+                self._respond(200, {"ok": True})
+                return
+
+            _samantha.submit(Stimulus(
+                kind="mention",
+                content=content,
+                sender_id=sender_id,
+                post_id=post_id,
+                comment_id=comment_id,
+                metadata={"post_title": title},
+            ))
+            self._respond(200, {"ok": True})
+
         else:
             self._respond(404, {"error": "not found"})
 
