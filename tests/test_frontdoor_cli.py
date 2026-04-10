@@ -267,6 +267,52 @@ def test_psyche_broken_targets_detects_unloadable_codex_config(monkeypatch, tmp_
     assert frontdoor._psyche_broken_targets() == ["Codex"]
 
 
+def test_psyche_health_snapshot_reports_ready(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor, "_psyche_entry_mode", lambda: "npx")
+    monkeypatch.setattr(frontdoor, "_psyche_configured_targets", lambda: ["Codex"])
+    monkeypatch.setattr(frontdoor, "_psyche_broken_targets", lambda: [])
+
+    health = frontdoor._psyche_health_snapshot()
+
+    assert health["state"] == "ready"
+    assert "Codex" in health["detail"]
+    assert health["repair"] is None
+
+
+def test_psyche_health_snapshot_reports_broken(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(frontdoor, "_psyche_entry_mode", lambda: "npx")
+    monkeypatch.setattr(frontdoor, "_psyche_configured_targets", lambda: [])
+    monkeypatch.setattr(frontdoor, "_psyche_broken_targets", lambda: ["Codex"])
+
+    health = frontdoor._psyche_health_snapshot()
+
+    assert health["state"] == "broken"
+    assert "Codex" in health["detail"]
+    assert "psyche-ai setup" in health["repair"]
+
+
+def test_thronglets_health_snapshot_reports_degraded_for_runtime_drift(tmp_path):
+    payload = {
+        "data": {
+            "summary": {
+                "status": "network-ready",
+            }
+        }
+    }
+
+    health = frontdoor._thronglets_health_snapshot(
+        payload,
+        "thronglets",
+        str(tmp_path / ".thronglets" / "bin" / "thronglets-managed"),
+    )
+
+    assert health["state"] == "degraded"
+    assert "drifted" in health["detail"]
+    assert health["repair"] == "thronglets setup"
+
+
 def test_resolve_thronglets_base_command_prefers_managed_launcher(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     launcher = tmp_path / ".thronglets" / "bin" / "thronglets-managed"
@@ -411,6 +457,19 @@ def test_bootstrap_thronglets_uses_canonical_runtime(monkeypatch):
 
     monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets-managed"])
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+    monkeypatch.setattr(
+        frontdoor,
+        "_collect_thronglets_runtime_status",
+        lambda: (
+            {"data": {"summary": {"status": "network-ready"}}},
+            "thronglets-managed",
+        ),
+    )
+    monkeypatch.setattr(
+        frontdoor,
+        "_thronglets_health_snapshot",
+        lambda thronglets, active_runtime, managed_runtime: {"state": "ready", "detail": "attached", "repair": None},
+    )
 
     frontdoor._bootstrap_thronglets()
 
@@ -423,6 +482,19 @@ def test_bootstrap_thronglets_passes_custom_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("THRONGLETS_DATA_DIR", str(tmp_path / "custom-thronglets"))
     monkeypatch.setattr(frontdoor, "_ensure_canonical_thronglets_runtime", lambda: ["thronglets-managed"])
     monkeypatch.setattr(frontdoor, "_run_checked", lambda cmd, capture_output=False: commands.append(cmd) or "")
+    monkeypatch.setattr(
+        frontdoor,
+        "_collect_thronglets_runtime_status",
+        lambda: (
+            {"data": {"summary": {"status": "network-ready"}}},
+            "thronglets-managed --data-dir",
+        ),
+    )
+    monkeypatch.setattr(
+        frontdoor,
+        "_thronglets_health_snapshot",
+        lambda thronglets, active_runtime, managed_runtime: {"state": "ready", "detail": "attached", "repair": None},
+    )
 
     frontdoor._bootstrap_thronglets()
 
@@ -462,7 +534,34 @@ def test_status_report_surfaces_runtime_drift(capsys):
                 }
             }
         },
-        "psyche": {"configured_targets": [], "entry": "missing"},
+        "psyche": {
+            "state": "degraded",
+            "detail": "runtime entry is unavailable on this machine",
+            "repair": "install psyche-ai or make npx available",
+            "configured_targets": [],
+            "broken_targets": [],
+            "entry": "missing",
+        },
+        "health": {
+            "overall": "degraded",
+            "components": {
+                "agent": {
+                    "state": "degraded",
+                    "detail": "background agent is stopped",
+                    "repair": "oasyce start",
+                },
+                "thronglets": {
+                    "state": "degraded",
+                    "detail": "runtime drifted from the canonical managed surface",
+                    "repair": "thronglets setup",
+                },
+                "psyche": {
+                    "state": "degraded",
+                    "detail": "runtime entry is unavailable on this machine",
+                    "repair": "install psyche-ai or make npx available",
+                },
+            },
+        },
         "paths": {
             "thronglets_active_runtime": "thronglets",
             "thronglets_managed_runtime": "/Users/demo/.thronglets/bin/thronglets-managed",
@@ -472,9 +571,11 @@ def test_status_report_surfaces_runtime_drift(capsys):
     frontdoor._print_status_report(payload)
 
     out = capsys.readouterr().out
+    assert "Stack:      degraded" in out
     assert "Runtime:    drifted" in out
     assert "Active:     thronglets" in out
     assert "Canonical:  /Users/demo/.thronglets/bin/thronglets-managed" in out
+    assert "Psyche: degraded" in out
 
 
 def test_ensure_canonical_thronglets_runtime_bootstraps_managed_launcher(monkeypatch, tmp_path):
