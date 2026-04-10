@@ -24,13 +24,15 @@ class Plan:
     intent: str = "respond"         # respond | observe | engage | comfort
     register: str = "warm"          # warm | playful | thoughtful | gentle | direct
     max_sentences: int = 8          # 0 = no limit
+    max_tokens: int | None = None   # hard limit from Psyche GenerationControls
     emoji_limit: int = 1            # -1 = no limit
-    tone_particles: list[str] = field(default_factory=list)
+    tone_style: str = ""            # "match" | "avoid" | "natural" (Psyche v11.8)
     tools: list[str] | None = None  # None = all tools available
     focus: str = ""                 # hint for generator: what to pay attention to
     include_posts: bool = False     # whether to fetch user's recent posts
     include_memories: bool = True   # whether to recall memories
     history_limit: int = 20         # how many history messages to include
+    require_confirmation: bool = False  # from Psyche GenerationControls/boundaryMode
 
 
 # ── Tool sets per intent ──────────────────────────────────────────
@@ -58,8 +60,10 @@ def plan(stimulus: Stimulus, kernel: SubjectivityKernel | None,
             p.max_sentences = contract.max_sentences
         if contract.emoji_limit >= 0:
             p.emoji_limit = contract.emoji_limit
-        if contract.tone_particles:
-            p.tone_particles = contract.tone_particles
+        if contract.tone_style:
+            p.tone_style = contract.tone_style
+        if contract.boundary_mode == "confirm-first":
+            p.require_confirmation = True
 
     # ── Stimulus-specific planning ────────────────────────────
     kind = stimulus.kind
@@ -86,6 +90,14 @@ def plan(stimulus: Stimulus, kernel: SubjectivityKernel | None,
             if kernel.guard > 0.5:
                 p.register = "thoughtful"
                 p.max_sentences = min(p.max_sentences, 4)
+            # Attention anchor steers focus
+            if kernel.attention_anchor == "threat" and not p.focus:
+                p.focus = "address the concern directly"
+            elif kernel.attention_anchor == "bond":
+                p.include_posts = True
+            # Boundary mode from kernel
+            if kernel.boundary_mode == "confirm-first":
+                p.require_confirmation = True
 
     elif kind == "feed_post":
         p.tools = _ENGAGE_TOOLS

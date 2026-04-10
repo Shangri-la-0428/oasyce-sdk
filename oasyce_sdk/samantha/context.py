@@ -233,10 +233,14 @@ def build_messages(
             constraint_lines.append(f"Target length: ~{plan.max_sentences} sentences")
         if plan.emoji_limit >= 0:
             constraint_lines.append(f"Emoji limit: {plan.emoji_limit}")
-        if plan.tone_particles:
-            constraint_lines.append(f"Tone: {', '.join(plan.tone_particles)}")
+        if plan.tone_style:
+            constraint_lines.append(f"Tone mirroring: {plan.tone_style}")
         if plan.focus:
             constraint_lines.append(f"Focus: {plan.focus}")
+        if plan.require_confirmation:
+            constraint_lines.append(
+                "IMPORTANT: Confirm with the user before taking any action."
+            )
         constraint_lines.append(
             "HARD RULE: Never open with 哈哈/嘿嘿/哇/嘻嘻/天哪 or any generic exclamation. "
             "Start with something specific to what they said."

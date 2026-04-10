@@ -36,7 +36,7 @@ WritebackSignal = Literal[
 
 @dataclass
 class SubjectivityKernel:
-    """Machine-readable emotional state (8 dimensions)."""
+    """Machine-readable subjective state."""
 
     vitality: float = 0.5
     tension: float = 0.5
@@ -46,6 +46,9 @@ class SubjectivityKernel:
     initiative_mode: str = ""
     expression_mode: str = ""
     social_distance: str = ""
+    boundary_mode: str = ""
+    attention_anchor: str = ""
+    dominant_need: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SubjectivityKernel:
@@ -58,6 +61,24 @@ class SubjectivityKernel:
             initiative_mode=data.get("initiativeMode", ""),
             expression_mode=data.get("expressionMode", ""),
             social_distance=data.get("socialDistance", ""),
+            boundary_mode=data.get("boundaryMode", ""),
+            attention_anchor=data.get("attentionAnchor", ""),
+            dominant_need=data.get("dominantNeed"),
+        )
+
+
+@dataclass
+class GenerationControls:
+    """Host-executable generation constraints from Psyche."""
+
+    max_tokens: int | None = None
+    require_confirmation: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> GenerationControls:
+        return cls(
+            max_tokens=data.get("maxTokens"),
+            require_confirmation=data.get("requireConfirmation", False),
         )
 
 
@@ -67,20 +88,33 @@ class ResponseContract:
 
     reply_profile: str = "work"
     max_sentences: int = 0
+    max_chars: int | None = None
     expression_mode: str = ""
     initiative_mode: str = ""
     emoji_limit: int = 0
-    tone_particles: list[str] = field(default_factory=list)
+    tone_style: str = ""
+    boundary_mode: str = ""
+    authenticity_mode: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ResponseContract:
+        # toneParticles changed from list[str] to string enum in Psyche v11.8
+        raw_tone = data.get("toneParticles", "")
+        if isinstance(raw_tone, list):
+            tone = ", ".join(raw_tone) if raw_tone else ""
+        else:
+            tone = str(raw_tone) if raw_tone else ""
+
         return cls(
             reply_profile=data.get("replyProfile", "work"),
             max_sentences=data.get("maxSentences", 0),
+            max_chars=data.get("maxChars"),
             expression_mode=data.get("expressionMode", ""),
             initiative_mode=data.get("initiativeMode", ""),
             emoji_limit=data.get("emojiLimit", 0),
-            tone_particles=data.get("toneParticles", []),
+            tone_style=tone,
+            boundary_mode=data.get("boundaryMode", ""),
+            authenticity_mode=data.get("authenticityMode", ""),
         )
 
 
@@ -94,6 +128,9 @@ class ReplyEnvelope:
     response_contract: ResponseContract = field(
         default_factory=ResponseContract
     )
+    generation_controls: GenerationControls = field(
+        default_factory=GenerationControls
+    )
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -104,6 +141,9 @@ class ReplyEnvelope:
             ),
             response_contract=ResponseContract.from_dict(
                 data.get("responseContract", {})
+            ),
+            generation_controls=GenerationControls.from_dict(
+                data.get("generationControls", {})
             ),
             raw=data,
         )
@@ -301,14 +341,16 @@ class PsycheClient:
         user_id: str | None = None,
         signals: list[WritebackSignal] | None = None,
         signal_confidence: float | None = None,
+        outcome_alignment: str | None = None,
+        outcome_effort: float | None = None,
     ) -> dict[str, Any]:
         """Notify Psyche of agent's action output.
 
-        Supports writeback signals: the WRITE side of emotional feedback.
-        Transaction outcomes map to signals:
-          succeeded → trust_up
-          failed    → trust_down
-          dispute   → boundary_set
+        Supports two feedback paths:
+        1. Writeback signals (legacy): trust_up, trust_down, etc.
+        2. LoopOutcome (v11.8): structured φ-loop feedback.
+           alignment: "aligned" | "diverged" | "partial"
+           effort: 0-1, modulates flow dimension
         """
         payload: dict[str, Any] = {"text": text}
         if user_id:
@@ -317,6 +359,11 @@ class PsycheClient:
             payload["signals"] = signals
         if signal_confidence is not None:
             payload["signalConfidence"] = signal_confidence
+        if outcome_alignment:
+            outcome: dict[str, Any] = {"alignment": outcome_alignment}
+            if outcome_effort is not None:
+                outcome["effort"] = outcome_effort
+            payload["outcome"] = outcome
 
         resp = self._session.post(
             f"{self._base_url}/process-output",

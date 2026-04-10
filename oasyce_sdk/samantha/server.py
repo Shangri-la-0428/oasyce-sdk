@@ -225,6 +225,14 @@ class Samantha:
         contract = perception.response_contract if perception else None
         p = make_plan(stimulus, kernel, contract)
 
+        # Apply GenerationControls from Psyche (drive-based hard limits)
+        gc = perception.generation_controls if perception else None
+        if gc:
+            if gc.max_tokens:
+                p.max_tokens = gc.max_tokens
+            if gc.require_confirmation:
+                p.require_confirmation = True
+
         if p.intent == "observe":
             logger.debug("Plan: observe, skipping %s", stimulus.kind)
             return None

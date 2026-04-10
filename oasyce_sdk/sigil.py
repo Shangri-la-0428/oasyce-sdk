@@ -185,6 +185,7 @@ class SigilManager:
                 system_context=pi.system_context,
                 dynamic_context=pi.dynamic_context,
                 response_contract=pi.reply_envelope.response_contract,
+                generation_controls=pi.reply_envelope.generation_controls,
             )
         except Exception:
             logger.debug("Psyche unavailable", exc_info=True)
@@ -224,16 +225,24 @@ class SigilManager:
             logger.debug("Thronglets trace_record failed", exc_info=True)
 
         signals = outcome_to_writeback(outcome, disputed=disputed)
-        if signals:
-            try:
-                self.psyche.process_output(
-                    action,
-                    user_id=self.sigil_id,
-                    signals=signals,
-                    signal_confidence=0.8,
-                )
-            except Exception:
-                logger.debug("Psyche writeback failed", exc_info=True)
+        # Map outcome to LoopOutcome alignment for φ-loop closure
+        alignment_map = {
+            "succeeded": "aligned",
+            "failed": "diverged",
+            "partial": "partial",
+            "timeout": "diverged",
+        }
+        alignment = alignment_map.get(outcome, "partial")
+        try:
+            self.psyche.process_output(
+                action,
+                user_id=self.sigil_id,
+                signals=signals or None,
+                signal_confidence=0.8 if signals else None,
+                outcome_alignment=alignment,
+            )
+        except Exception:
+            logger.debug("Psyche writeback failed", exc_info=True)
 
     # ── Chain queries ────────────────────────────────────────────
 

@@ -263,6 +263,33 @@ class ThrongletsClient:
         data = resp.json()
         return data.get("sessions", [])
 
+    def ambient_priors(
+        self,
+        text: str,
+        *,
+        space: str | None = None,
+        goal: str | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Get structured ambient priors for a context.
+
+        Returns runtime-only guidance (failure residue, success priors, etc.)
+        without requiring explicit tool calls.
+        """
+        payload: dict[str, Any] = {"text": text, "limit": limit}
+        if space:
+            payload["space"] = space
+        if goal:
+            payload["goal"] = goal
+
+        resp = self._session.post(
+            f"{self._base_url}/v1/ambient-priors",
+            json=payload,
+            timeout=self._timeout,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def signal_post(
         self,
         context: str,

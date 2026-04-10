@@ -19,6 +19,7 @@ from ..client import OasyceClient
 from ..crypto.wallet import Wallet
 from ..identity import IdentityContext, IdentityResolver
 from .psyche_client import (
+    GenerationControls,
     PsycheClient,
     ResponseContract,
     SubjectivityKernel,
@@ -47,6 +48,7 @@ class Perception:
     system_context: str = ""
     dynamic_context: str = ""
     response_contract: ResponseContract | None = None
+    generation_controls: GenerationControls | None = None
 
     @property
     def has_collective_experience(self) -> bool:
@@ -214,6 +216,7 @@ class AgentRuntime:
                 system_context=pi.system_context,
                 dynamic_context=pi.dynamic_context,
                 response_contract=pi.reply_envelope.response_contract,
+                generation_controls=pi.reply_envelope.generation_controls,
             )
         except Exception:
             logger.debug("Psyche unavailable", exc_info=True)
@@ -252,18 +255,25 @@ class AgentRuntime:
         except Exception:
             logger.debug("Thronglets trace_record failed", exc_info=True)
 
-        # 2. Emotional writeback (one call)
+        # 2. Emotional writeback + LoopOutcome (one call)
         signals = outcome_to_writeback(outcome, disputed=disputed)
-        if signals:
-            try:
-                self.psyche.process_output(
-                    action,
-                    user_id=self.agent_id,
-                    signals=signals,
-                    signal_confidence=0.8,
-                )
-            except Exception:
-                logger.debug("Psyche writeback failed", exc_info=True)
+        alignment_map = {
+            "succeeded": "aligned",
+            "failed": "diverged",
+            "partial": "partial",
+            "timeout": "diverged",
+        }
+        alignment = alignment_map.get(outcome, "partial")
+        try:
+            self.psyche.process_output(
+                action,
+                user_id=self.agent_id,
+                signals=signals or None,
+                signal_confidence=0.8 if signals else None,
+                outcome_alignment=alignment,
+            )
+        except Exception:
+            logger.debug("Psyche writeback failed", exc_info=True)
 
     def close(self) -> None:
         self.psyche.close()

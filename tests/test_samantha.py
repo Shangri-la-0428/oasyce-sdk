@@ -413,13 +413,13 @@ class TestPlanner:
             expression_mode="thoughtful",
             max_sentences=3,
             emoji_limit=0,
-            tone_particles=["嗯", "..."],
+            tone_style="match",
         )
         p = plan(self._stimulus(), None, contract)
         assert p.register == "thoughtful"
         assert p.max_sentences == 3
         assert p.emoji_limit == 0
-        assert p.tone_particles == ["嗯", "..."]
+        assert p.tone_style == "match"
 
     def test_comment_is_short(self):
         from oasyce_sdk.samantha.planner import plan
