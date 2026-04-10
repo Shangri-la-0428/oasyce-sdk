@@ -49,6 +49,7 @@ class Perception:
     dynamic_context: str = ""
     response_contract: ResponseContract | None = None
     generation_controls: GenerationControls | None = None
+    ambient_priors: dict | None = None
 
     @property
     def has_collective_experience(self) -> bool:

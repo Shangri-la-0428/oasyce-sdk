@@ -41,19 +41,24 @@ def proactive_loop(samantha: Samantha, interval: int = 300) -> None:
 
 
 def _memory_maintenance(samantha: Samantha) -> None:
-    """Prune stale facts + Dream consolidation across all active sessions."""
+    """Prune stale facts + Dream consolidation across all active sessions.
+
+    Errors here are warnings, not debug: if maintenance is silently failing
+    then core memory stops updating and stale facts never get pruned, which
+    is a quiet drift of agent behavior over time.
+    """
     for user_id, sess in list(samantha._sessions.items()):
         try:
             pruned = sess.memory.prune(max_age_days=90, min_access=0)
             if pruned:
                 logger.info("User %d: pruned %d stale memories", user_id, pruned)
         except Exception:
-            logger.debug("Prune failed for user %d", user_id, exc_info=True)
+            logger.warning("Prune failed for user %d", user_id, exc_info=True)
 
         try:
             samantha.dream(user_id, sess)
         except Exception:
-            logger.debug("Dream failed for user %d", user_id, exc_info=True)
+            logger.warning("Dream failed for user %d", user_id, exc_info=True)
 
 
 def _scan_feed(samantha: Samantha, seen: set[int]) -> None:

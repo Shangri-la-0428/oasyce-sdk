@@ -206,6 +206,7 @@ def build_messages(
     history_summary: str = "",
     image_urls: list[str] | None = None,
     recent_posts: list[dict[str, Any]] | None = None,
+    message_matches: list[dict[str, Any]] | None = None,
     context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> list[dict[str, Any]]:
     """Assemble the full message list with budget-aware truncation.
@@ -311,13 +312,27 @@ def build_messages(
         system_parts.append(posts_text)
         retrieval_used += _estimate_tokens(posts_text)
 
-    # Memories (FTS5 recalled facts)
+    # Memories (FTS5 recalled facts) + verbatim message matches
+    # Split remaining retrieval budget: ~half for facts, ~half for messages
+    remaining_retrieval = budget.retrieval - retrieval_used
+    fact_budget = remaining_retrieval // 2 if message_matches else remaining_retrieval
+    msg_budget = remaining_retrieval - fact_budget
+
     if memories:
-        mem_budget = budget.retrieval - retrieval_used
         mem_lines = [f"- ({m['category']}) {m['content']}" for m in memories[:5]]
         mem_text = "[Your memories about this user]\n" + "\n".join(mem_lines)
-        mem_text = _truncate_text(mem_text, mem_budget)
+        mem_text = _truncate_text(mem_text, fact_budget)
         system_parts.append(mem_text)
+
+    if message_matches:
+        msg_lines = []
+        for m in message_matches[:5]:
+            role = m.get("role", "user")
+            who = "they said" if role == "user" else "you said"
+            msg_lines.append(f'- {who}: "{m.get("content", "")[:200]}"')
+        msg_text = "[Relevant past exchanges]\n" + "\n".join(msg_lines)
+        msg_text = _truncate_text(msg_text, msg_budget)
+        system_parts.append(msg_text)
 
     messages.append({"role": "system", "content": "\n\n".join(system_parts)})
 

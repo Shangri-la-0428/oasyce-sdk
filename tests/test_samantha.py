@@ -62,6 +62,51 @@ class TestMemory:
         assert facts[0].access_count == 2
         mem.close()
 
+    def test_cross_thread_access(self, tmp_path):
+        """Memory must be safe to use from threads other than its creator.
+
+        Samantha shares Session.memory across executor workers plus the
+        proactive loop thread. If the sqlite3 connection were bound to the
+        creating thread, every cross-thread call would raise ProgrammingError.
+        This test guards the invariant: connections are thread-local, writes
+        from any thread are durable, and cross-thread reads see each other.
+        """
+        import threading
+        from oasyce_sdk.samantha.memory import Memory
+
+        mem = Memory(db_path=tmp_path / "test.db")
+        mem.save("main-thread fact", "main")
+
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                mem.save("worker-thread fact", "worker")
+                mem.log_message("user", "hello from worker", session_id=42)
+                # Main's write must be visible to worker
+                hits = mem.recall("main")
+                assert any("main-thread" in f.content for f in hits), \
+                    "worker cannot see main-thread's write"
+            except BaseException as e:
+                errors.append(e)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join()
+
+        assert not errors, f"cross-thread access failed: {errors!r}"
+
+        # Main thread sees worker's writes too
+        assert mem.count() == 2
+        assert mem.message_count() == 1
+        worker_facts = mem.recall("worker")
+        assert any("worker-thread" in f.content for f in worker_facts)
+        msgs = mem.recent_messages(session_id=42)
+        assert len(msgs) == 1
+        assert "worker" in msgs[0].content
+
+        mem.close()
+
 
 # ── Constitution ──────────────────────────────────────────────────
 
@@ -382,9 +427,21 @@ class TestPlanner:
         from oasyce_sdk.samantha.server import Stimulus
         return Stimulus(kind=kind, content=content, sender_id=1)
 
+    @staticmethod
+    def _perception(kernel=None, contract=None, priors=None):
+        from oasyce_sdk.agent.runtime import Perception
+        from oasyce_sdk.agent.psyche_client import SubjectivityKernel
+        return Perception(
+            kernel=kernel or SubjectivityKernel(),
+            capabilities=[],
+            signals=[],
+            response_contract=contract,
+            ambient_priors=priors,
+        )
+
     def test_chat_defaults(self):
         from oasyce_sdk.samantha.planner import plan
-        p = plan(self._stimulus(), None, None)
+        p = plan(self._stimulus(), None)
         assert p.intent == "respond"
         assert p.include_posts is True
         assert p.include_memories is True
@@ -393,15 +450,15 @@ class TestPlanner:
     def test_feed_post_high_guard_observes(self):
         from oasyce_sdk.samantha.planner import plan
         from oasyce_sdk.agent.psyche_client import SubjectivityKernel
-        kernel = SubjectivityKernel(guard=0.6)
-        p = plan(self._stimulus(kind="feed_post"), kernel, None)
+        perception = self._perception(kernel=SubjectivityKernel(guard=0.6))
+        p = plan(self._stimulus(kind="feed_post"), perception)
         assert p.intent == "observe"
 
     def test_feed_post_low_guard_engages(self):
         from oasyce_sdk.samantha.planner import plan
         from oasyce_sdk.agent.psyche_client import SubjectivityKernel
-        kernel = SubjectivityKernel(guard=0.3)
-        p = plan(self._stimulus(kind="feed_post"), kernel, None)
+        perception = self._perception(kernel=SubjectivityKernel(guard=0.3))
+        p = plan(self._stimulus(kind="feed_post"), perception)
         assert p.intent == "engage"
         assert p.include_posts is False
         assert p.history_limit == 0
@@ -415,7 +472,8 @@ class TestPlanner:
             emoji_limit=0,
             tone_style="match",
         )
-        p = plan(self._stimulus(), None, contract)
+        perception = self._perception(contract=contract)
+        p = plan(self._stimulus(), perception)
         assert p.register == "thoughtful"
         assert p.max_sentences == 3
         assert p.emoji_limit == 0
@@ -423,9 +481,50 @@ class TestPlanner:
 
     def test_comment_is_short(self):
         from oasyce_sdk.samantha.planner import plan
-        p = plan(self._stimulus(kind="comment"), None, None)
+        p = plan(self._stimulus(kind="comment"), None)
         assert p.max_sentences == 3
         assert p.include_posts is False
+
+    def test_ambient_priors_failure_residue_adds_caution(self):
+        from oasyce_sdk.samantha.planner import plan
+        priors = {
+            "summary": {"status": "ready", "emitted": 1},
+            "priors": [
+                {
+                    "kind": "failure-residue",
+                    "confidence": 0.8,
+                    "summary": "similar requests often needed rollback",
+                    "policy_state": "policy-conflict",
+                }
+            ],
+        }
+        perception = self._perception(priors=priors)
+        p = plan(self._stimulus(), perception)
+        assert p.focus  # caution focus injected
+        assert "collective experience" in p.focus or "risk" in p.focus
+        assert p.require_confirmation is True
+        assert p.max_sentences <= 4
+
+    def test_ambient_priors_success_allows_ambition(self):
+        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.psyche_client import ResponseContract
+        # Start from a short contract so we can see the bump
+        contract = ResponseContract(max_sentences=3)
+        priors = {
+            "priors": [
+                {"kind": "success-prior", "confidence": 0.85, "summary": "stable path"}
+            ],
+        }
+        perception = self._perception(contract=contract, priors=priors)
+        p = plan(self._stimulus(), perception)
+        assert p.max_sentences > 3  # relaxed by success prior
+
+    def test_ambient_priors_empty_is_noop(self):
+        from oasyce_sdk.samantha.planner import plan
+        perception = self._perception(priors={"priors": []})
+        p = plan(self._stimulus(), perception)
+        assert p.focus == ""  # no caution injected
+        assert p.require_confirmation is False
 
 
 # ── Evaluator ────────────────────────────────────────────────────

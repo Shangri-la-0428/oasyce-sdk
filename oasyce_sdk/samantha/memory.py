@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,38 +32,108 @@ class Fact(NamedTuple):
     access_count: int
 
 
+class Message(NamedTuple):
+    id: int
+    role: str          # 'user' | 'assistant'
+    content: str
+    session_id: int
+    created_at: str
+
+
+# Schema is idempotent (IF NOT EXISTS everywhere) so every freshly-opened
+# connection can run it safely. That's what makes per-thread connections
+# work without coordination: each thread opens its own, runs the same DDL,
+# and gets the same view of the DB.
+_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        category TEXT DEFAULT 'general',
+        created_at TEXT NOT NULL,
+        last_accessed TEXT,
+        access_count INTEGER DEFAULT 0
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts
+        USING fts5(content, category, content='facts', content_rowid='id');
+
+    CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+        INSERT INTO facts_fts(rowid, content, category)
+        VALUES (new.id, new.content, new.category);
+    END;
+    CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+        INSERT INTO facts_fts(facts_fts, rowid, content, category)
+        VALUES ('delete', old.id, old.content, old.category);
+    END;
+
+    CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        session_id INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+        USING fts5(content, content='messages', content_rowid='id');
+    CREATE INDEX IF NOT EXISTS idx_messages_session
+        ON messages(session_id, created_at);
+
+    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content)
+        VALUES (new.id, new.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content)
+        VALUES ('delete', old.id, old.content);
+    END;
+"""
+
+
 class Memory:
-    """Persistent fact store backed by SQLite FTS5."""
+    """Persistent fact store backed by SQLite FTS5.
+
+    Two tables:
+      facts      — LLM-extracted semantic knowledge (the agent's "beliefs")
+      messages   — verbatim turn-by-turn log (the raw conversation)
+
+    Extracted facts are lossy but searchable by concept. Verbatim messages
+    preserve nuance and exact phrasing for recall of specific moments.
+    Recall from both paths is cheap (FTS5) and complementary.
+
+    Threading model
+    ---------------
+    One Memory instance is shared across threads; each thread that touches
+    it opens its own `sqlite3.Connection` stored in a `threading.local`.
+    This matches how the stdlib `sqlite3` module is designed to be used
+    from multi-threaded code: share the database, not the connection.
+
+    SQLite's WAL mode lets readers proceed in parallel with a writer and
+    serializes writers at the file layer, so no Python-level lock is
+    needed — the correctness guarantee comes from SQLite itself.
+    """
 
     def __init__(self, db_path: Path | None = None):
         p = db_path or DEFAULT_DB_PATH
         p.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(p))
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._init_schema()
+        self._path = str(p)
+        self._local = threading.local()
+        # Eager open: if the path is unwritable or the schema fails, surface
+        # the error at construction time rather than on the first operation.
+        self._connect()
 
-    def _init_schema(self) -> None:
-        self._conn.executescript("""
-            CREATE TABLE IF NOT EXISTS facts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                category TEXT DEFAULT 'general',
-                created_at TEXT NOT NULL,
-                last_accessed TEXT,
-                access_count INTEGER DEFAULT 0
-            );
-            CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts
-                USING fts5(content, category, content='facts', content_rowid='id');
+    def _connect(self) -> sqlite3.Connection:
+        """Return the current thread's connection, opening it on first use."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(_SCHEMA)
+            self._local.conn = conn
+        return conn
 
-            CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
-                INSERT INTO facts_fts(rowid, content, category)
-                VALUES (new.id, new.content, new.category);
-            END;
-            CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-                INSERT INTO facts_fts(facts_fts, rowid, content, category)
-                VALUES ('delete', old.id, old.content, old.category);
-            END;
-        """)
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """Thread-local connection — lazy-created per thread, never shared."""
+        return self._connect()
 
     def save(self, content: str, category: str = "general") -> int:
         """Store a fact. Returns its id."""
@@ -111,6 +182,59 @@ class Memory:
         row = self._conn.execute("SELECT COUNT(*) FROM facts").fetchone()
         return row[0] if row else 0
 
+    # ── Verbatim messages ─────────────────────────────────────
+
+    def log_message(self, role: str, content: str, session_id: int = 0) -> int:
+        """Store a verbatim turn. Returns its id."""
+        if not content:
+            return 0
+        now = datetime.now(timezone.utc).isoformat()
+        cur = self._conn.execute(
+            "INSERT INTO messages (role, content, session_id, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (role, content, session_id, now),
+        )
+        self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def search_messages(self, query: str, limit: int = 5) -> list[Message]:
+        """FTS5 search across verbatim messages, ranked by relevance."""
+        if not query.strip():
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT m.id, m.role, m.content, m.session_id, m.created_at
+            FROM messages_fts
+            JOIN messages m ON m.id = messages_fts.rowid
+            WHERE messages_fts MATCH ?
+            ORDER BY messages_fts.rank
+            LIMIT ?
+            """,
+            (query, limit),
+        ).fetchall()
+        return [Message(*r) for r in rows]
+
+    def recent_messages(self, session_id: int = 0, limit: int = 20) -> list[Message]:
+        """Latest messages for a session (or all sessions if session_id=0)."""
+        if session_id:
+            rows = self._conn.execute(
+                "SELECT id, role, content, session_id, created_at "
+                "FROM messages WHERE session_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (session_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT id, role, content, session_id, created_at "
+                "FROM messages ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [Message(*r) for r in rows]
+
+    def message_count(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) FROM messages").fetchone()
+        return row[0] if row else 0
+
     def prune(self, max_age_days: int = 90, min_access: int = 0) -> int:
         """Remove stale facts. Returns count of deleted rows.
 
@@ -134,7 +258,17 @@ class Memory:
         return deleted
 
     def close(self) -> None:
-        self._conn.close()
+        """Close the current thread's connection. Best-effort cleanup.
+
+        Connections held by other threads are reclaimed when those threads
+        exit or when the garbage collector runs over their thread-locals.
+        Under WAL every `commit()` is durable, so this cannot cause data
+        loss — it only releases the current thread's file handle.
+        """
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
 
 
 # ── Core Memory (MemGPT-inspired) ──────────────────────────────

@@ -18,17 +18,16 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
 from .app_client import AppClient, format_post
 from .constitution import load_constitution
-from .context import ConversationMessage, build_messages
-from .evaluator import evaluate as evaluate_response
+from .context import ConversationMessage
 from .llm import load_provider, load_registry, LLMProvider, ModelRegistry
 from .memory import Memory, CoreMemory, HistorySummary
-from .planner import Plan, plan as make_plan
+from .pipeline import EnrichContext, run_pipeline
+from .planner import Plan
 from .tools import ToolRegistry, ToolContext, build_default_registry, fetch_post_detail
 
 logger = logging.getLogger(__name__)
@@ -213,126 +212,140 @@ class Samantha:
     # ── PGE cognitive loop ──────────────────────────────────────
 
     def process(self, stimulus: Stimulus) -> str | None:
-        """Plan → Generate → Evaluate. One LLM call, two rule checks."""
-        logger.info("process: %s sender=%s post=%s",
-                     stimulus.kind, stimulus.sender_id, stimulus.post_id)
+        """Run the PGE cognitive loop for one stimulus.
 
-        # 1. Perceive (Psyche + Thronglets — existing HTTP calls)
-        perception = self._perceive(stimulus)
-
-        # 2. Plan (zero cost — pure rules from Psyche ResponseContract)
-        kernel = perception.kernel if perception else None
-        contract = perception.response_contract if perception else None
-        p = make_plan(stimulus, kernel, contract)
-
-        # Apply GenerationControls from Psyche (drive-based hard limits)
-        gc = perception.generation_controls if perception else None
-        if gc:
-            if gc.max_tokens:
-                p.max_tokens = gc.max_tokens
-            if gc.require_confirmation:
-                p.require_confirmation = True
-
-        if p.intent == "observe":
-            logger.debug("Plan: observe, skipping %s", stimulus.kind)
-            return None
-
-        # 3. Enrich (Plan-driven — only fetch what the plan needs)
-        memories, core_memory, history, image_urls, recent_posts, hist_summary = \
-            self._enrich(stimulus, p)
-
-        # 4. Generate (one LLM call with Plan-constrained context)
-        prompt = self._build_prompt(stimulus)
-        messages = build_messages(
+        All orchestration lives in pipeline.run_pipeline — this method is
+        just the wiring from Samantha's state to the pipeline hooks.
+        """
+        return run_pipeline(
+            stimulus,
+            perceive=self._perceive,
+            enrich=self._enrich,
+            build_prompt=self._build_prompt,
+            get_llm=self._get_llm,
+            build_tool_ctx=self._build_tool_ctx,
+            generate=self._generate,
+            deliver=self._deliver,
+            log_turn=self._log_turn,
+            reflect=self._reflect,
             constitution=self.constitution,
-            perception=perception,
-            plan=p,
-            memories=memories,
-            core_memory=core_memory,
-            history=history,
-            user_message=prompt,
-            history_summary=hist_summary,
-            image_urls=image_urls,
-            recent_posts=recent_posts,
+            tool_registry=self._tools,
         )
 
-        # Vision routing: only when user explicitly sends images, not from post context
-        user_has_images = bool(stimulus.image_urls)
-        llm = self._get_llm(stimulus, needs_vision=user_has_images)
-        if llm is None:
-            return None
-        tool_defs = self._tools.select(p.tools)
-        tool_ctx = self._build_tool_ctx(stimulus)
-        response = self._generate(llm, stimulus, messages, tool_defs, tool_ctx)
-
-        # 5. Evaluate (zero cost — rule-based quality gate)
-        verdict = evaluate_response(response, p)
-        if not verdict.passed:
-            logger.info("Evaluator rejected: %s", verdict.issues)
-            messages.append({"role": "assistant", "content": response})
-            messages.append({"role": "user", "content": verdict.feedback})
-            try:
-                resp = llm.generate(messages, tools=tool_defs)
-                response = resp.text or response  # keep original if regeneration empty
-            except Exception:
-                pass  # use original response
-
-        # 6. Deliver + Reflect
-        self._deliver(stimulus, response)
-        self._reflect(stimulus, response, perception)
-
-        return response
+    def _log_turn(self, stimulus: Stimulus, response: str) -> None:
+        """Log verbatim turn to session memory (chat only)."""
+        if stimulus.kind != "chat" or not stimulus.sender_id:
+            return
+        try:
+            sess = self.session(stimulus.sender_id)
+            sess.memory.log_message("user", stimulus.content, stimulus.session_id)
+            if response:
+                sess.memory.log_message("assistant", response, stimulus.session_id)
+        except Exception:
+            # Memory writes failing means verbatim log is dropping data —
+            # surface it. Pipeline continues (turn already delivered).
+            logger.warning("log_turn failed for user %d",
+                           stimulus.sender_id, exc_info=True)
 
     # ── Pipeline phases ─────────────────────────────────────────
 
     def _perceive(self, stimulus: Stimulus):
-        if not self.sigil:
-            return None
-        try:
-            return self.sigil.perceive(f"{stimulus.kind}: {stimulus.content[:200]}")
-        except Exception:
-            logger.debug("perceive failed", exc_info=True)
-            return None
+        """Perceive is constitutive: always return a Perception, never None.
 
-    def _enrich(self, stimulus: Stimulus, plan: Plan):
+        Three sources of self/world knowledge (all optional, degrade gracefully):
+          1. Psyche ReplyEnvelope — kernel + contract (via sigil.perceive)
+          2. Thronglets capability query — collective experience (via sigil.perceive)
+          3. Thronglets ambient priors — failure residue + success priors for this context
+
+        When Psyche is unavailable, fall back to a baseline kernel. A default
+        kernel isn't "no state" — it's the baseline self-state.
+        """
+        from ..agent.runtime import Perception
+        from ..agent.psyche_client import SubjectivityKernel
+
+        context = f"{stimulus.kind}: {stimulus.content[:200]}"
+        perception: Perception
+        if self.sigil:
+            try:
+                perception = self.sigil.perceive(context)
+            except Exception:
+                logger.debug("perceive failed", exc_info=True)
+                perception = Perception(
+                    kernel=SubjectivityKernel(), capabilities=[], signals=[]
+                )
+        else:
+            perception = Perception(
+                kernel=SubjectivityKernel(), capabilities=[], signals=[]
+            )
+
+        # Ambient priors — collective intelligence about similar situations.
+        # Separate from the perceive() call so Psyche+Thronglets query failures
+        # don't cascade into losing priors that could steer the Planner.
+        if self.sigil:
+            try:
+                goal = "build" if stimulus.kind == "chat" else "explore"
+                perception.ambient_priors = self.sigil.thronglets.ambient_priors(
+                    stimulus.content[:200],
+                    goal=goal,
+                    space=self.sigil.space,
+                )
+            except Exception:
+                logger.debug("ambient_priors unavailable", exc_info=True)
+
+        return perception
+
+    def _enrich(self, stimulus: Stimulus, plan: Plan) -> EnrichContext:
         """Plan-driven context gathering. Only fetch what the plan needs."""
-        memories: list[dict] = []
-        core_memory: CoreMemory | None = None
-        history: list[ConversationMessage] = []
-        image_urls = list(stimulus.image_urls)
-        recent_posts: list[dict] = []
-        hist_summary = ""
+        ctx = EnrichContext(image_urls=list(stimulus.image_urls))
 
         if stimulus.kind == "chat" and stimulus.sender_id:
             sess = self.session(stimulus.sender_id)
             if stimulus.session_id:
                 sess.track_session(stimulus.session_id)
-            core_memory = sess.core_memory
+            ctx.core_memory = sess.core_memory
 
             if plan.include_memories:
+                # Memory failures shouldn't crash the pipeline — we can
+                # still answer without recall — but they must be visible.
+                # Before the thread-local connection refactor these crashed
+                # silently on every cross-thread access.
                 try:
                     facts = sess.memory.recall(stimulus.content, limit=5)
-                    memories = [{"content": f.content, "category": f.category}
-                                for f in facts]
+                    ctx.memories = [
+                        {"content": f.content, "category": f.category}
+                        for f in facts
+                    ]
                 except Exception:
-                    pass
+                    logger.warning("Fact recall failed for user %d",
+                                   stimulus.sender_id, exc_info=True)
+
+                # Verbatim message recall — the MemPalace insight
+                try:
+                    msgs = sess.memory.search_messages(stimulus.content, limit=5)
+                    ctx.message_matches = [
+                        {"role": m.role, "content": m.content, "created_at": m.created_at}
+                        for m in msgs
+                    ]
+                except Exception:
+                    logger.warning("Message recall failed for user %d",
+                                   stimulus.sender_id, exc_info=True)
 
             if plan.history_limit > 0:
-                history = self._fetch_history(stimulus.session_id)
-                hist_summary = sess.history_summary.get(stimulus.session_id)
+                ctx.history = self._fetch_history(stimulus.session_id)
+                ctx.hist_summary = sess.history_summary.get(stimulus.session_id)
 
             if plan.include_posts:
-                recent_posts = self._fetch_user_posts(stimulus.sender_id)
+                ctx.recent_posts = self._fetch_user_posts(stimulus.sender_id)
 
-        elif stimulus.kind == "mention" and stimulus.post_id and not image_urls:
+        elif stimulus.kind == "mention" and stimulus.post_id and not ctx.image_urls:
             post = fetch_post_detail(self.app, stimulus.post_id)
-            image_urls = post.get("image_urls", [])
+            ctx.image_urls = post.get("image_urls", [])
             stimulus.metadata.setdefault("post_title", post.get("title", ""))
             stimulus.metadata.setdefault("post_content", post.get("content", ""))
             stimulus.metadata.setdefault("post_author", post.get("author", ""))
             stimulus.metadata.setdefault("post_location", post.get("location", ""))
 
-        return memories, core_memory, history, image_urls, recent_posts, hist_summary
+        return ctx
 
     def _build_prompt(self, stimulus: Stimulus) -> str:
         s = stimulus
@@ -522,18 +535,38 @@ class Samantha:
             logger.debug("Dream summarize LLM failed", exc_info=True)
 
     def _dream_consolidate(self, llm, sess: Session) -> None:
+        """Dream-cycle core memory update.
+
+        Reads both extracted facts (lossy but searchable) and verbatim
+        messages (MemPalace insight — raw nuance beats paraphrase).
+        Either source alone is enough to run; if both empty, skip.
+        """
         facts = sess.memory.all_facts(limit=20)
-        if not facts:
+        recent_msgs = sess.memory.recent_messages(limit=30)
+        if not facts and not recent_msgs:
             return
+
         current_human = sess.core_memory.get("human")
         current_rel = sess.core_memory.get("relationship")
-        fact_lines = [f"- ({f.category}) {f.content}" for f in facts]
+
+        sections: list[str] = []
+        if facts:
+            fact_lines = [f"- ({f.category}) {f.content}" for f in facts]
+            sections.append("Recent memories:\n" + "\n".join(fact_lines))
+        if recent_msgs:
+            # Chronological order (recent_messages returns newest-first)
+            msg_lines = [
+                f"{'Joi' if m.role == 'assistant' else 'User'}: {m.content[:200]}"
+                for m in reversed(recent_msgs)
+            ]
+            sections.append("Recent conversation:\n" + "\n".join(msg_lines))
 
         prompt = (
-            "Based on these recent memories, update two core memory blocks.\n\n"
+            "Based on these recent memories and conversation, update two "
+            "core memory blocks.\n\n"
             f"Current [human] block:\n{current_human or '(empty)'}\n\n"
             f"Current [relationship] block:\n{current_rel or '(empty)'}\n\n"
-            f"Recent memories:\n" + "\n".join(fact_lines) + "\n\n"
+            + "\n\n".join(sections) + "\n\n"
             "Output JSON with two keys: \"human\" and \"relationship\". "
             "Merge new information, remove outdated info. Max 500 chars each. JSON only."
         )
@@ -612,111 +645,38 @@ def _strip_images(messages: list[dict]) -> list[dict]:
     return result
 
 
-# ── HTTP webhook handler ────────────────────────────────────────
-
-_samantha: Samantha | None = None
-
-
-class WebhookHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length)) if length else {}
-
-        if self.path == "/hook/message":
-            session_id = body.get("session_id", 0)
-            sender_id = body.get("sender_id", 0)
-            content = body.get("content", "")
-
-            if not content or not _samantha:
-                self._respond(200, {"ok": True})
-                return
-
-            _samantha.submit(Stimulus(
-                kind="chat", content=content,
-                sender_id=sender_id, session_id=session_id,
-            ))
-            self._respond(200, {"ok": True})
-
-        elif self.path == "/hook/post_mention":
-            post_id = body.get("post_id", 0)
-            comment_id = body.get("comment_id", 0)
-            sender_id = body.get("sender_id", 0)
-            title = body.get("title", "")
-            content = body.get("content", "")
-
-            if not _samantha or (not post_id and not content):
-                self._respond(200, {"ok": True})
-                return
-
-            _samantha.submit(Stimulus(
-                kind="mention",
-                content=content,
-                sender_id=sender_id,
-                post_id=post_id,
-                comment_id=comment_id,
-                metadata={"post_title": title},
-            ))
-            self._respond(200, {"ok": True})
-
-        else:
-            self._respond(404, {"error": "not found"})
-
-    def do_GET(self):
-        if self.path == "/health":
-            sessions = list(_samantha._sessions.keys()) if _samantha else []
-            self._respond(200, {"status": "ok", "active_sessions": sessions})
-        else:
-            self._respond(404, {"error": "not found"})
-
-    def _respond(self, code: int, body: dict):
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(body).encode())
-
-    def log_message(self, fmt, *args):
-        logger.info(fmt, *args)
-
-
 # ── Entry point ─────────────────────────────────────────────────
 
 def main():
-    global _samantha
-
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
     config = SamanthaConfig.load()
-    _samantha = Samantha(config)
+    samantha = Samantha(config)
 
     if config.proactive_interval > 0:
         from .loop import proactive_loop
         threading.Thread(
             target=proactive_loop,
-            args=(_samantha, config.proactive_interval),
+            args=(samantha, config.proactive_interval),
             daemon=True,
         ).start()
         logger.info("Proactive loop started (interval=%ds)", config.proactive_interval)
 
+    from .http import run_http_server
     threading.Thread(
-        target=_run_http_server,
-        args=(_samantha, config.port),
+        target=run_http_server,
+        args=(samantha, config.port),
         daemon=True,
     ).start()
 
     from .ws_client import ws_listen
     logger.info("Samantha starting — connecting to App WebSocket...")
     try:
-        ws_listen(_samantha)
+        ws_listen(samantha)
     except KeyboardInterrupt:
         pass
     finally:
-        _samantha.close()
-
-
-def _run_http_server(samantha: Samantha, port: int) -> None:
-    server = HTTPServer(("127.0.0.1", port), WebhookHandler)
-    logger.info("Health endpoint on http://127.0.0.1:%d/health", port)
-    server.serve_forever()
+        samantha.close()
 
 
 if __name__ == "__main__":
