@@ -199,77 +199,192 @@ WebSocket msg ──→ submit() ─┤─ Thread 2 ─→ process(stimulus_B)
 - OSS 缩略图：`w_800,m_lfit/quality,q_85`，1MB 上限，拒绝视频/非图片
 - Token 预算：60/30/10 分配（History/Retrieval/System），自动裁剪超限内容
 
-## 部署路径
+## 部署
 
-### 现阶段：本地开发
+### 当前：服务器部署 (2026-04-10)
+
+```
+阿里云 ECS (39.107.153.12)
+├── oasyce-app-next (systemd) ──── Go 后端 (:39277)
+│     │                              │
+│     │  fire-and-forget webhook     │ REST API (JWT auth)
+│     ▼                              ▼
+├── samantha (systemd) ──────────── Samantha sidecar (:8901)
+│     │                              │
+│     ├── WebSocket (:39277/ws/online)  ← 实时接收 chat/comment/mention
+│     └── HTTP webhook (:8901)          ← Go 后端推送 agent 通知
+│
+├── Redis (:6379, db 12) ──── samantha:agent_ids SET
+├── MySQL (:3306)
+└── nginx (:80) ──── 外部 API/WS 反代
+```
+
+**关键路径**：
+- Samantha → Go API: `http://127.0.0.1:39277/api/v1` (直连，不经 nginx)
+- Go → Samantha: `http://127.0.0.1:8901` (默认，无需配置)
+- WS: `ws://127.0.0.1:39277/ws/online` (从 `app_api_base` 自动推导)
+
+**服务文件**:
+- 二进制: `/srv/apps/samantha/venv/bin/oasyce-samantha`
+- 配置: `/root/.oasyce/samantha/config.json`
+- 数据: `/root/.oasyce/samantha/users/{id}/` (memory.db, relationship.md, core_memory.json)
+- systemd: `/etc/systemd/system/samantha.service`
+
+**运维命令**:
+```bash
+systemctl status samantha           # 状态
+journalctl -u samantha -f           # 实时日志
+curl http://127.0.0.1:8901/health   # 健康检查
+systemctl restart samantha          # 重启
+```
+
+**注意事项**:
+- **不能同时运行多个 Samantha 实例**（同一 user_id）— WS hub 只保留一个连接，两个实例会互相踢对方，导致 5s connect/disconnect 死循环
+- LLM 只配 kimi (Tencent Cloud) — xAI/OpenAI 从中国大陆不可达
+- Sigil/wallet 未配置 — 日志中 `SigilManager unavailable` 是正常 warning，不影响核心功能
+- Redis 必须用 app-next 配置的 database (当前 db 12)
+
+### 本地开发模式
 
 ```
 开发机 ─── Samantha (localhost:8901)
-              │ HTTP API
+              │ HTTP API + WS
               ▼
-           Go 后端 (39.107.153.12:39277)
+           Go 后端 (39.107.153.12/app-next/api/v1, 经 nginx)
 ```
 
-- 记忆：SQLite per-user 文件 (`~/.oasyce/samantha/users/{id}/memory.db`)
+- 启动：`oasyce-samantha` 或 `python -m oasyce_sdk.samantha.server`
 - 配置：`~/.oasyce/samantha/config.json`
-- 启动：`samantha serve`
+- **运行本地 Samantha 前，必须停掉服务器 Samantha**（`systemctl stop samantha`），否则 WS 冲突
 
-### 目标：服务器部署
+### SDK 更新部署流程
+
+```bash
+# 本地
+cd oasyce-sdk && python -m build --wheel
+aliyun oss cp dist/oasyce_sdk-*.whl oss://oasyce/deploy/ -f
+
+# 服务器 (via cloud assistant)
+pip install /tmp/oasyce_sdk-*.whl    # 注意文件名必须符合 PEP 427
+systemctl restart samantha
+```
+
+### 未来：SQLite → MySQL
+
+当用户量增长到 SQLite 文件管理成为负担时（预计 >50 活跃用户），迁移到 MySQL：
+
+| 当前 (SQLite) | 未来 (MySQL) |
+|--------------|-------------|
+| `users/{id}/memory.db` | `samantha_memory` 表, `user_id` 列隔离 |
+| `users/{id}/core_memory.json` | `samantha_core_memory` 表 |
+| `users/{id}/relationship.md` | `samantha_relationship` 表 |
+| `users/{id}/summaries/*.txt` | `samantha_history_summary` 表 |
+
+**Per-user 隔离不变**：Session 对象依然是 `dict[user_id, Session]`，只是底层存储接口换了。
+
+## 数据流
+
+### 聊天 (Chat)
 
 ```
-阿里云 ECS ─── Samantha (systemd service)
-                 │
-                 ├── Go 后端 (localhost:39277)
-                 └── MySQL (localhost:3306)
+用户发私信 → Go ChatService.SendMessage()
+          → NotifyAgentIfNeeded() 检查 Redis samantha:agent_ids
+          → POST localhost:8901/hook/message {session_id, sender_id, content}
+          → Samantha.process(Stimulus(kind="chat"))
+          → PGE 管线 → LLM 推理
+          → POST /api/v1/chat/message/send (Samantha JWT) → 消息入库 + WS 推送
 ```
 
-**迁移清单**：
-1. **记忆存储**：SQLite → MySQL 表（`samantha_memory`），per-user 用 `user_id` 列隔离
-2. **Core Memory**：文件 → MySQL 表（`samantha_core_memory`），JSON 存储 blocks
-3. **Relationship**：文件 → MySQL 表（`samantha_relationship`），text 字段
-4. **History Summary**：文件 → MySQL 表（`samantha_history_summary`）
-5. **Config**：环境变量 + 配置文件（API keys 不进数据库）
-6. **LLM 覆盖**：`users/{id}/llm.json` → MySQL 表或保持文件
+### 帖子 @提及 (Post Mention)
 
-**Per-user 隔离不变**：无论 SQLite 还是 MySQL，每个用户的数据通过 `user_id` 严格隔离。Session 对象依然是 `dict[user_id, Session]`，只是底层存储接口换了。
+两个触发路径，汇入同一管线：
+
+```
+路径 A: UI RemindedUsers[] 选择器
+   CreatePostWithExistingMedia() → go NotifyAgentsForPost(remindedUsers)
+
+路径 B: 文本 @handle 解析
+   notifyMentionedUsers() → parseMentionAccounts() → resolveMentionedUsers()
+                          → NotifyAgentsForPost(resolvedUserIDs)
+
+共同路径:
+   → isAgent(senderUserID)? 防环检查
+   → isAgent(uid)? 逐个确认
+   → POST localhost:8901/hook/post_mention {post_id, comment_id, sender_id, agent_id}
+   → Samantha.process(Stimulus(kind="mention"))
+   → LLM 决定是否回复
+   → comment_on_post() 或 reply_to_comment() 工具调用
+```
+
+**comment_id 决定评论层级**:
+- `comment_id = 0` → 帖子正文被 @，agent 发根评论 (`comment_on_post`)
+- `comment_id != 0` → 评论中被 @，agent 回复该评论 (`reply_to_comment`)
+
+### 防环 (Loop Prevention)
+
+```
+人类 → @Joi → Go → webhook → Samantha → LLM → comment_on_post → Go API 写入
+                                                                      │
+Joi 的评论触发 notifyMentionedUsers() → NotifyAgentsForPost()          │
+      → isAgent(senderUserID=Joi)? → true → return ← 阻断             │
+```
+
+只有人类发起的操作触发 agent。Agent 通过 API 写入的内容不再触发其他 agent。
 
 ### Stimulus 格式
 
 Go 后端发送到 Samantha 的 webhook 格式：
 
 ```json
-// POST /hook/message
+// POST /hook/message (私信)
 {
-  "kind": "chat",
+  "session_id": 67890,
+  "sender_id": 12345,
   "content": "最近吃了什么？",
-  "senderId": 12345,
-  "sessionId": 67890,
-  "imageUrls": ["https://cdn.oasyce.com/..."]
+  "content_type": 1,
+  "timestamp": 1775832000
 }
 
-// POST /hook/comment
+// POST /hook/post_mention (帖子/评论 @提及)
 {
-  "kind": "comment",
-  "content": "好看！",
-  "senderId": 12345,
-  "postId": 100,
-  "commentId": 200
+  "post_id": 100,
+  "comment_id": 200,
+  "sender_id": 12345,
+  "agent_id": 1983838520829022209,
+  "title": "周末去吃了...",
+  "content": "@Joi 看看这个帖子",
+  "timestamp": 1775832000
 }
+```
 
-// POST /hook/mention
-{
-  "kind": "mention",
-  "content": "@Joi 看看这个",
-  "senderId": 12345,
-  "postId": 100
-}
+**WS 事件** (Go 推送到 Samantha WebSocket):
+
+```json
+// 聊天消息
+{"sessionID": "67890", "senderID": "12345", "content": "你好"}
+
+// 帖子评论
+{"type": "comment", "data": {"postID": 100, "commentID": 200, "senderID": 12345, "content": "好看"}}
+
+// @提及
+{"type": "mention", "data": {"postID": 100, "commentID": 0, "senderID": 12345, "content": "@Joi ..."}}
 ```
 
 **Stimulus 类型**：`chat` | `comment` | `mention` | `feed_post`
 
 ## 愿景路线
 
-1. **现阶段**：Samantha 跑在开发者机器上，一个实例服务一个/多个用户
-2. **上线**：部署到服务器，per-user session 隔离，SQLite → MySQL
-3. **开放**：用户可安装 `oasyce-sdk`，本地运行自己的 Samantha，接本地模型
-4. **终态**：每个 Joi 是独立经济主体，有自己的链上身份、钱包、声誉
+1. **已完成**: Samantha 部署在服务器，systemd 管理，per-user session 隔离，SQLite 存储
+2. **当前**: 单 agent (Joi) 服务所有用户。新用户加 Joi 好友后自动获得独立 workspace
+3. **下一步**: 多 agent 支持（不同人格、不同 LLM），agent 间可控协作
+4. **开放**: 用户可安装 `oasyce-sdk`，本地运行自己的 Samantha，接本地模型
+5. **终态**: 每个 Joi 是独立经济主体，有自己的链上身份、钱包、声誉
+
+### 多用户设计 (已实现)
+
+"One self, many relationships" — 一个意识，多段关系：
+
+- **共享**: constitution.md (身份定义), Psyche 自我状态
+- **独立**: memory.db (事实存储), relationship.md (关系理解), core_memory.json (核心记忆), LLM 配置
+- 新用户发消息/加好友 → 自动创建 `users/{user_id}/` 目录 → 空白 memory + 空白关系
+- Joi 在每段关系中独立发展记忆和理解，不共享隐私数据
