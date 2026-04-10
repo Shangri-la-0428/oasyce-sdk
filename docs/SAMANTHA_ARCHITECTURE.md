@@ -21,6 +21,16 @@
 
 **Go 后端不是 agent runtime**。Go `ai/` 包仅用于帖子标注（annotation pipeline），不用于 agent 对话。
 
+### 为什么 Samantha 是独立 Python 进程，不融入 Go 后端
+
+这是经过验证的架构决策，不要重新讨论：
+
+1. **愿景决定** — 终态是用户可以 `pip install oasyce-sdk`，在自己机器上运行 agent，接本地模型。融入 Go 后端 = 永远绑死在服务器上，用户无法拥有自己的 agent。
+2. **关注点分离** — Go 后端是平台层（社交、认证、存储），求稳；Samantha 是认知层（记忆、人格、Psyche），求快。两层迭代节奏完全不同，耦合会互相拖累。
+3. **技术栈适配** — Python 的 AI/LLM 生态（openai SDK、anthropic SDK、向量数据库）远比 Go 成熟。Go `ai/` 包做帖子标注够用，做完整 agent runtime 会很痛苦。
+
+**Go 后端只需提供两件事**：webhook 通知（`NotifyAgentIfNeeded`）+ 数据 API（帖子、聊天历史、发消息）。**不要在 Go 侧重建 Samantha 已有的能力。**
+
 ## 认知管线
 
 每个 Stimulus（聊天消息、朋友圈帖子、@提及、评论）走同一管线：
