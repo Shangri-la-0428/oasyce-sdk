@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .app_client import AppClient, extract_media_urls
+from .app_client import AppClient, format_post
 
 logger = logging.getLogger(__name__)
 
@@ -117,15 +117,7 @@ def _get_user_posts(args: dict, ctx: ToolContext) -> str:
         posts = ctx.app.fetch_user_posts(partner_id, limit=limit)
     else:
         posts = ctx.app.fetch_own_posts(limit=limit)
-    return json.dumps([{
-        "id": p.get("id"),
-        "title": p.get("title", ""),
-        "content": p.get("content", ""),
-        "media": extract_media_urls(p.get("media")),
-        "media_cover": p.get("mediaCover", ""),
-        "location": p.get("locationName", ""),
-        "created_at": p.get("createAt", ""),
-    } for p in posts])
+    return json.dumps([format_post(p, include_id=True) for p in posts])
 
 
 def _get_friends_feed(args: dict, ctx: ToolContext) -> str:
@@ -136,16 +128,7 @@ def _get_friends_feed(args: dict, ctx: ToolContext) -> str:
     for group in groups:
         author = group.get("user", {}).get("name", "")
         for p in group.get("items", []):
-            result.append({
-                "id": p.get("id"),
-                "author": author,
-                "title": p.get("title", ""),
-                "content": p.get("content", ""),
-                "media": extract_media_urls(p.get("media")),
-                "media_cover": p.get("mediaCover", ""),
-                "location": p.get("locationName", ""),
-                "created_at": p.get("createAt", ""),
-            })
+            result.append(format_post(p, include_id=True, author=author))
     return json.dumps(result)
 
 

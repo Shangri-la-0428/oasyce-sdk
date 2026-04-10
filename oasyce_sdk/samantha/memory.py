@@ -14,10 +14,9 @@ import json
 import logging
 import sqlite3
 from dataclasses import dataclass
-from typing import ClassVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NamedTuple
+from typing import ClassVar, NamedTuple
 
 logger = logging.getLogger(__name__)
 

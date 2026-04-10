@@ -89,6 +89,23 @@ class AppClient:
 
 # ── Media extraction (single source of truth) ─────────────────
 
+def format_post(raw: dict, *, include_id: bool = False, author: str = "") -> dict:
+    """Normalize raw API post into a clean dict. Single source of truth."""
+    result: dict = {
+        "title": raw.get("title", ""),
+        "content": raw.get("content", ""),
+        "location": raw.get("locationName", ""),
+        "media": extract_media_urls(raw.get("media")),
+        "media_cover": raw.get("mediaCover", ""),
+        "created_at": raw.get("createAt", ""),
+    }
+    if include_id:
+        result["id"] = raw.get("id")
+    if author:
+        result["author"] = author
+    return result
+
+
 def extract_media_urls(media_list: list | None) -> list[str]:
     """Extract image URLs from both normal and Live media formats.
 

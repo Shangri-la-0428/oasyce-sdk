@@ -62,9 +62,7 @@ def _connect_and_listen(samantha: Samantha) -> None:
 
             stimulus = _parse(samantha, data)
             if stimulus:
-                threading.Thread(
-                    target=samantha.process, args=(stimulus,), daemon=True
-                ).start()
+                samantha.submit(stimulus)
     finally:
         stop_heartbeat.set()
         ws.close()

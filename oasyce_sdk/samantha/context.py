@@ -16,6 +16,8 @@ from __future__ import annotations
 import base64
 import logging
 import threading
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
@@ -28,8 +30,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_IMAGE_CACHE: dict[str, str] = {}
+_IMAGE_CACHE: OrderedDict[str, str] = OrderedDict()
 _IMAGE_CACHE_LOCK = threading.Lock()
+_IMAGE_CACHE_MAX = 64
+_image_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="img")
 
 TOKENS_PER_IMAGE = 1500       # fixed estimate per base64 image
 OUTPUT_RESERVE = 2048          # tokens reserved for LLM response
@@ -105,8 +109,8 @@ class ConversationMessage:
 
 # ── Image handling ─────────────────────────────────────────────
 
-_MAX_IMAGE_BYTES = 512 * 1024  # 512KB — thumbnails only, never originals
-_THUMBNAIL_SUFFIX = "?x-oss-process=image/resize,w_400"  # Aliyun OSS thumbnail
+_MAX_IMAGE_BYTES = 1024 * 1024  # 1MB — thumbnails only, never originals
+_THUMBNAIL_SUFFIX = "?x-oss-process=image/resize,w_800,m_lfit/quality,q_85"  # match app detail spec
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mp3", ".wav", ".webm", ".flv"}
 
 _IMAGE_MAGIC: dict[bytes, str] = {
@@ -135,12 +139,10 @@ def _to_thumbnail(url: str) -> str:
 
 
 def _fetch_image_as_data_uri(url: str) -> str | None:
-    """Download thumbnail from OSS and return as base64 data URI.
+    """Download OSS thumbnail and return as base64 data URI.
 
-    Always requests thumbnails (w_400) instead of originals.
-    Rejects non-image files and anything over 512KB.
+    Requests w_800 thumbnails, rejects non-image and >1MB.
     """
-    # Skip video URLs
     lower = url.lower().split("?")[0]
     if any(lower.endswith(ext) for ext in _VIDEO_EXTS):
         return None
@@ -149,6 +151,7 @@ def _fetch_image_as_data_uri(url: str) -> str | None:
 
     with _IMAGE_CACHE_LOCK:
         if thumb_url in _IMAGE_CACHE:
+            _IMAGE_CACHE.move_to_end(thumb_url)
             return _IMAGE_CACHE[thumb_url]
     try:
         resp = http_requests.get(thumb_url, timeout=5)
@@ -163,13 +166,30 @@ def _fetch_image_as_data_uri(url: str) -> str | None:
             return None
         data_uri = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
         with _IMAGE_CACHE_LOCK:
-            if len(_IMAGE_CACHE) > 50:
-                _IMAGE_CACHE.clear()
             _IMAGE_CACHE[thumb_url] = data_uri
+            while len(_IMAGE_CACHE) > _IMAGE_CACHE_MAX:
+                _IMAGE_CACHE.popitem(last=False)
         return data_uri
     except Exception:
         logger.debug("Failed to fetch image: %s", thumb_url, exc_info=True)
         return None
+
+
+def _fetch_images_concurrent(urls: list[str], limit: int = 4) -> list[str]:
+    """Fetch up to `limit` images in parallel. Returns data URIs."""
+    urls = urls[:limit]
+    if not urls:
+        return []
+    futures = [_image_pool.submit(_fetch_image_as_data_uri, u) for u in urls]
+    results = []
+    for f in futures:
+        try:
+            uri = f.result(timeout=8)
+            if uri:
+                results.append(uri)
+        except Exception:
+            pass
+    return results
 
 
 # ── Build messages (budget-aware) ──────────────────────────────
@@ -217,6 +237,10 @@ def build_messages(
             constraint_lines.append(f"Tone: {', '.join(plan.tone_particles)}")
         if plan.focus:
             constraint_lines.append(f"Focus: {plan.focus}")
+        constraint_lines.append(
+            "HARD RULE: Never open with 哈哈/嘿嘿/哇/嘻嘻/天哪 or any generic exclamation. "
+            "Start with something specific to what they said."
+        )
         constraint_text = "\n".join(constraint_lines)
         system_parts.append(constraint_text)
         system_used += _estimate_tokens(constraint_text)
@@ -293,19 +317,18 @@ def build_messages(
 
     messages.append({"role": "system", "content": "\n\n".join(system_parts)})
 
-    # ── Vision: inject recent post images (base64) ─────────────
+    # ── Vision: inject recent post images (base64, concurrent) ─
     if _post_image_urls:
-        vision_blocks: list[dict[str, Any]] = [
-            {"type": "text", "text": "These are photos from this person's recent posts:"},
-        ]
-        for url in _post_image_urls[:4]:
-            data_uri = _fetch_image_as_data_uri(url)
-            if data_uri:
+        post_data_uris = _fetch_images_concurrent(_post_image_urls)
+        if post_data_uris:
+            vision_blocks: list[dict[str, Any]] = [
+                {"type": "text", "text": "These are photos from this person's recent posts:"},
+            ]
+            for data_uri in post_data_uris:
                 vision_blocks.append({
                     "type": "image_url",
                     "image_url": {"url": data_uri},
                 })
-        if len(vision_blocks) > 1:
             messages.append({"role": "user", "content": vision_blocks})
             messages.append({"role": "assistant", "content": "I can see these photos."})
 
@@ -337,20 +360,19 @@ def build_messages(
 
     # ── Current message (text-only or multimodal) ──────────────
     if image_urls:
-        content_blocks: list[dict[str, Any]] = [
-            {"type": "text", "text": user_message},
-        ]
-        for url in image_urls[:4]:
-            data_uri = _fetch_image_as_data_uri(url)
-            if data_uri:
+        user_data_uris = _fetch_images_concurrent(image_urls)
+        if user_data_uris:
+            content_blocks: list[dict[str, Any]] = [
+                {"type": "text", "text": user_message},
+            ]
+            for data_uri in user_data_uris:
                 content_blocks.append({
                     "type": "image_url",
                     "image_url": {"url": data_uri},
                 })
-        messages.append({
-            "role": "user",
-            "content": content_blocks if len(content_blocks) > 1 else user_message,
-        })
+            messages.append({"role": "user", "content": content_blocks})
+        else:
+            messages.append({"role": "user", "content": user_message})
     else:
         messages.append({"role": "user", "content": user_message})
 

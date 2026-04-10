@@ -9,7 +9,6 @@ Cost: zero. Pure string inspection.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass, field
 
 from .planner import Plan

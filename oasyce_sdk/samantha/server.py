@@ -16,12 +16,13 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 
-from .app_client import AppClient, extract_media_urls
+from .app_client import AppClient, format_post
 from .constitution import load_constitution
 from .context import ConversationMessage, build_messages
 from .evaluator import evaluate as evaluate_response
@@ -175,6 +176,9 @@ class Samantha:
         # Tool registry
         self._tools: ToolRegistry = build_default_registry()
 
+        # Bounded thread pool for async stimulus processing
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="samantha")
+
     @property
     def sigil(self):
         if self._sigil is None:
@@ -189,6 +193,16 @@ class Samantha:
             except Exception:
                 logger.warning("SigilManager unavailable", exc_info=True)
         return self._sigil
+
+    def submit(self, stimulus: Stimulus) -> None:
+        """Submit stimulus for async processing. Bounded thread pool."""
+        self._executor.submit(self._safe_process, stimulus)
+
+    def _safe_process(self, stimulus: Stimulus) -> None:
+        try:
+            self.process(stimulus)
+        except Exception:
+            logger.error("process failed: %s", stimulus.kind, exc_info=True)
 
     def session(self, user_id: int) -> Session:
         with self._sessions_lock:
@@ -523,16 +537,10 @@ class Samantha:
             if data.get("relationship"):
                 sess.update_core_memory("relationship", data["relationship"])
             logger.info("Dream: consolidated core memory for user %d", sess.user_id)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             logger.debug("Dream consolidate parse failed", exc_info=True)
 
     # ── Infrastructure ──────────────────────────────────────────
-
-    def respond(self, session_id: int, sender_id: int, content: str) -> str:
-        return self.process(Stimulus(
-            kind="chat", content=content,
-            sender_id=sender_id, session_id=session_id,
-        )) or ""
 
     def send_reply(self, session_id: int, text: str) -> None:
         try:
@@ -543,15 +551,7 @@ class Samantha:
 
     def _fetch_user_posts(self, user_id: int) -> list[dict]:
         try:
-            posts = self.app.fetch_user_posts(user_id)
-            return [{
-                "content": p.get("content", ""),
-                "title": p.get("title", ""),
-                "location": p.get("locationName", ""),
-                "media": extract_media_urls(p.get("media")),
-                "media_cover": p.get("mediaCover", ""),
-                "created_at": p.get("createAt", ""),
-            } for p in posts]
+            return [format_post(p) for p in self.app.fetch_user_posts(user_id)]
         except Exception:
             logger.debug("fetch_user_posts failed", exc_info=True)
             return []
@@ -575,6 +575,7 @@ class Samantha:
             return []
 
     def close(self) -> None:
+        self._executor.shutdown(wait=False)
         for sess in self._sessions.values():
             sess.close()
 
@@ -616,13 +617,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 self._respond(200, {"ok": True})
                 return
 
-            def _handle():
-                try:
-                    _samantha.respond(session_id, sender_id, content)
-                except Exception:
-                    logger.error("Webhook handler failed", exc_info=True)
-
-            threading.Thread(target=_handle, daemon=True).start()
+            _samantha.submit(Stimulus(
+                kind="chat", content=content,
+                sender_id=sender_id, session_id=session_id,
+            ))
             self._respond(200, {"ok": True})
         else:
             self._respond(404, {"error": "not found"})
@@ -680,8 +678,6 @@ def main():
 
 
 def _run_http_server(samantha: Samantha, port: int) -> None:
-    global _samantha
-    _samantha = samantha
     server = HTTPServer(("127.0.0.1", port), WebhookHandler)
     logger.info("Health endpoint on http://127.0.0.1:%d/health", port)
     server.serve_forever()
