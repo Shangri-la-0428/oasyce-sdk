@@ -52,18 +52,27 @@ from .types import (
 )
 
 def _package_version() -> str:
+    # Source-first: if the adjacent pyproject.toml is readable, that's the
+    # canonical version.  This keeps editable installs always in sync with
+    # ``pyproject.toml`` (no ``pip install -e .`` dance after a bump) and
+    # eliminates the "editable metadata drift" warning that check_pulse_compat
+    # surfaces when installed dist metadata lags behind source.
+    #
+    # Wheel installs have no pyproject.toml adjacent to the package, so the
+    # ``.exists()`` check falls through to ``importlib.metadata.version``
+    # which is stamped at wheel build time — still correct in that case.
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    if pyproject.exists():
+        match = re.search(
+            r'^version\s*=\s*"([^"]+)"',
+            pyproject.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        if match:
+            return match.group(1)
     try:
         return version("oasyce-sdk")
     except PackageNotFoundError:
-        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-        if pyproject.exists():
-            match = re.search(
-                r'^version\s*=\s*"([^"]+)"',
-                pyproject.read_text(encoding="utf-8"),
-                re.MULTILINE,
-            )
-            if match:
-                return match.group(1)
         return "0+unknown"
 
 
