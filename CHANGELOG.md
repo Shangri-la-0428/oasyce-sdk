@@ -1,5 +1,106 @@
 # Changelog
 
+## [0.11.5] - 2026-04-11
+
+### Changed
+
+- **SigilManager: identity is now an injected public value object, not an internal slot.** `Identity` is a public `@dataclass(frozen=True)` carrying `sigil_id`, `address`, `public_key_hex`, an optional `ChainSigner`, and an optional `IdentityContext`. It has two factories: `Identity.null()` (substrate-only mode) and `Identity.from_local_wallet(client, chain_id, wallet=)` (V1). `SigilManager.__init__` now accepts an `identity=` keyword argument — when provided, the runtime bypasses wallet discovery entirely. When omitted, the constructor falls back to `resolve_identity(...)` for V1 back-compat, so existing callers (`SigilManager()`, `SigilManager(wallet=w)`) continue to work unchanged. Passing both `identity=` and `wallet=` is rejected with `ValueError` — contradictory intent must not be silently resolved.
+- **New `ChainSigner` Protocol.** A `@runtime_checkable` `typing.Protocol` narrowing the signing contract to exactly the six methods SigilManager calls: `create_sigil`, `dissolve_sigil`, `bond_sigils`, `unbond_sigils`, `fork_sigil`, `merge_sigils`. The method signatures mirror `NativeSigner` exactly so the V1 path is a zero-cost pass-through. Future identity backends (remote signer, HSM, multi-sig, AI-as-principal) only need to satisfy this Protocol — no inheritance from `NativeSigner`, no wallet, no filesystem required.
+- **`_require_identity(op)` now returns the full `Identity`.** Chain-write methods (`genesis`, `dissolve`, `bond`, `unbond`, `fork`, `merge`) pull `signer` and `public_key_hex` off the returned Identity instead of reaching into a separate `self._wallet` / `self.signer`. All wallet-shaped references are gone from the method bodies.
+- **Samantha: identity resolution is explicit at the call site.** `Samantha.__init__` now constructs its own `OasyceClient`, calls `resolve_identity(client=..., chain_id=...)`, and passes the result as `SigilManager(identity=...)`. On the Mac dev box this yields a populated identity; on the ECS server (no local wallet) it yields `Identity.null()` and the runtime goes straight into substrate-only mode. The seam is visible at the one call site that needs to change when V1 → V2 lands.
+- **Module docstring rewritten** to document the V1→V2 seam, the three construction forms (injected, V1 back-compat, substrate-only), and the architectural invariant that SigilManager never sees `Wallet`, `NativeSigner`, or `IdentityContext` except through the `Identity` value object.
+
+### Removed
+
+- **`_IdentitySlot` private dataclass.** It has been superseded by the public `Identity` value object. The substrate-only construction path now flows through `Identity.null()` instead of an internal empty slot.
+
+### Added
+
+- `oasyce_sdk.sigil.Identity` — public value object.
+- `oasyce_sdk.sigil.ChainSigner` — public Protocol.
+- `oasyce_sdk.sigil.resolve_identity` — public helper: "discover local wallet, or return `Identity.null()` on FileNotFoundError; propagate any other error".
+- `tests/test_sigil_manager.py::TestIdentityInjection` — eight invariant tests proving the seam works:
+  - `test_inject_null_identity_runs_in_substrate_only_mode` — explicit null identity == implicit missing-wallet path.
+  - `test_inject_populated_identity_skips_wallet_discovery` — `resolve_identity` is *not* called when `identity=` is provided (monkeypatch guard raises if it is).
+  - `test_injected_identity_drives_chain_writes_end_to_end` — a custom `ChainSigner` drives all six writes (genesis, bond, unbond, fork, merge, dissolve).
+  - `test_fake_signer_satisfies_chain_signer_protocol_check` — `isinstance(fake, ChainSigner)` structural typing guardrail.
+  - `test_contradictory_wallet_and_identity_kwargs_rejected` — `SigilManager(identity=..., wallet=...)` raises `ValueError`.
+  - `test_resolve_identity_returns_null_when_no_wallet` — helper fallback contract.
+  - `test_resolve_identity_propagates_non_filenotfound_errors` — only `FileNotFoundError` gets the null-identity translation; everything else surfaces.
+  - `test_identity_null_factory_is_immutable_value` — frozen dataclass smoke test.
+
+### Why
+
+0.11.2 fixed the symptom. 0.11.3 refactored the internals into orthogonal slots. But the `_IdentitySlot` was still private — identity resolution and construction were owned by SigilManager, and no external caller could plug in a different identity backend without editing SigilManager's body. That left the V1→V2 migration (per `project_identity_principal_vision`: "V1 principal=human is temporary; end state is AI as independent principal") blocked at the architecture layer.
+
+0.11.5 finishes the decoupling by promoting `Identity` to a public, injectable value object and narrowing the signing contract to a `ChainSigner` Protocol. The load-bearing test is `test_inject_populated_identity_skips_wallet_discovery`: it monkeypatches `resolve_identity` to raise, injects a custom Identity with a fake signer, and proves SigilManager never reaches into the filesystem. When the V2 identity factory lands (AI principal, HSM, remote signer — whichever comes first), the work is entirely on the identity side; SigilManager's body does not change. Samantha's `__init__` also moved to the explicit `resolve_identity(...)` + `identity=...` form so the seam is visible at the one call site that will actually need to change.
+
+No hidden risks, no technical debt, no feature flag — the separation is architectural, not conditional. 327 tests pass (was 319 after 0.11.4; +8 invariant tests here).
+
+## [0.11.4] - 2026-04-11
+
+### Fixed
+
+- **Memory: FTS5 input sanitisation.** `Memory.recall` and `Memory.search_messages` now route every query through `_fts5_query`, a token-extracting helper that quotes each word as a literal phrase. Previously, free-form user content containing FTS5 operators (`.` `:` `-` `+` `*` `^` `"` and bareword phrases) raised `sqlite3.OperationalError: fts5: syntax error`. The original failure was visible in production journals immediately after the 0.11.3 deploy: messages with version strings like `0.11.3` or punctuation runs caused both fact recall AND verbatim message search to throw, taking the retrieval layer offline for the affected stimulus. The new helper short-circuits operator-only / empty inputs to `[]` so the contract becomes "garbage in → no results, never an exception".
+
+### Added
+
+- `tests/test_samantha.py::TestMemory::test_recall_handles_punctuation_and_versions` — covers the exact production failure shape (version strings, colon-qualified identifiers, operator-only input, embedded quoted phrases).
+- `tests/test_samantha.py::TestMemory::test_search_messages_handles_punctuation` — same contract for verbatim message search, plus CJK input matching.
+- `tests/test_samantha.py::TestMemory::test_fts5_query_helper_directly` — unit-tests the sanitiser in isolation, documenting the contract every caller relies on (operator-only → `""`, tokens quoted as literal phrases, Unicode word characters preserved).
+
+### Why
+
+0.11.3 fixed the SigilManager architecture but the production smoke test surfaced a second hidden risk: memory recall was crashing on real user input because FTS5's MATCH clause was being passed raw query strings. This was a pre-existing latent bug that the architectural cleanup made visible — when SigilManager started actually working, retrieval errors stopped being masked by upstream `if self.sigil:` guards. 0.11.4 closes the loop on the "no hidden risks" promise: every FTS5 callsite now has a single sanitisation chokepoint and three regression tests pinning the contract.
+
+## [0.11.3] - 2026-04-11
+
+### Changed
+
+- **SigilManager: explicit composition of Identity + Substrate slots.** The class is now composed of two private dataclasses — `_IdentitySlot` (wallet + signer + chain identity, optional) and `_SubstrateSlot` (Psyche + Thronglets HTTP clients, always present). This makes the wallet/HTTP dependency surfaces orthogonal in code, not just in intent. The 0.11.2 substrate-only fix is preserved and is now an architectural invariant guarded by tests.
+- **New public contract**: `SigilManager.mode` returns `"full"` or `"substrate_only"`; `can_sign` is a cheap (no network) capability check; `can_perceive` / `can_socialize` probe substrate reachability with one HTTP call each. Existing public attributes (`psyche`, `thronglets`, `signer`, `identity`, `sigil_id`, `address`, `client`, `_wallet`) are preserved as backwards-compatible properties — no caller changes required.
+- **Chain-write guard returns the unwrapped pair**: `_require_signer(op)` is replaced by `_require_identity(op) -> tuple[Wallet, NativeSigner]`. Callers (`genesis`, `dissolve`, `bond`, `unbond`, `fork`, `merge`) now use the returned values directly, so the type-narrowing of "we have an identity" flows through the call site instead of relying on a separate `self.signer` access.
+- **Samantha: eager SigilManager construction, no defensive cruft.** `Samantha.__init__` now constructs `self.sigil` eagerly with no try/except — any unexpected failure surfaces at startup, not silently at first request. The lazy `sigil` property and the `except Exception: self._sigil = None` swallow are gone. A startup log line reports the runtime mode, sigil_id, and substrate URLs so operators see the operational state immediately.
+- **Samantha: `_perceive` is now straight-line orchestration.** The redundant outer `try/except` and `if self.sigil:` guards are removed; `sigil.perceive` is constitutive (always returns a Perception) so wrapping it with another fallback added complexity without value. `_build_tool_ctx` and `_reflect` are similarly simplified.
+
+### Added
+
+- `tests/test_sigil_manager.py::TestArchitecturalInvariants` — three invariant tests that prevent the original bug class from regressing: (1) `__init__` never raises `FileNotFoundError` for missing wallet, (2) substrate clients are always constructed regardless of identity branch, (3) unrelated exceptions still propagate so real bugs surface instead of being swallowed.
+- `mode`, `can_sign`, and `status()["mode"]` test coverage in both substrate-only and full identity paths.
+
+### Why
+
+The 0.11.2 fix solved the symptom (FileNotFoundError taking down the Loop) but left the underlying architecture unchanged: SigilManager still conflated five concerns and samantha still used `except Exception: self._sigil = None`, which would have hidden the next bug of any kind. 0.11.3 addresses the root cause — wallet identity and HTTP substrates are now explicitly orthogonal, samantha trusts the SDK contract instead of defending against it, and the contract is locked in by invariant tests.
+
+## [0.11.2] - 2026-04-11
+
+### Fixed
+
+- **SigilManager substrate-only mode**: Previously, `SigilManager.__init__` raised `FileNotFoundError` from `IdentityResolver.resolve()` whenever no local wallet existed, taking down the entire Loop on server-side deployments where chain signing happens elsewhere (per the Chain.Creator constraint). Result: even with Psyche and Thronglets running on the server, Samantha set `self.sigil = None` and never called either substrate.
+
+  The fix decouples concerns: identity is now optional. When no wallet is present, `SigilManager` boots with `identity = None`, `signer = None`, `sigil_id = ""`, but still constructs the Psyche and Thronglets HTTP clients. `perceive()`, `act()`, ambient_priors, and trace_record continue to work over HTTP. Chain-writing methods (`genesis`, `dissolve`, `bond`, `unbond`, `fork`, `merge`) raise a clean `RuntimeError` naming the operation. `on_chain()`, `bonds()`, `children()`, and `ping()` short-circuit gracefully.
+
+### Added
+
+- `tests/test_sigil_manager.py` — substrate-only mode regression guard. Verifies `__init__` survives missing wallet, chain writes raise with the operation name in the message, query methods short-circuit, and the with-wallet path still populates identity.
+
+## [0.11.1] - 2026-04-11
+
+### Fixed
+
+- **Critical protobuf drift**: `MsgGenesis` was serializing `lineage` and `state_root` under each other's field numbers, so a parent Sigil ID passed via MCP would land in the `state_root` column on-chain. Latent drift in `MsgFork` (`child_public_key` dict key, `mutation` treated as bytes) and a missing `sigil_id` field on `MsgAnchorTrace` were also corrected.
+
+### Changed
+
+- `oasyce_sdk/crypto/msg_schemas.py` is now auto-generated from `oasyce-chain/x/<module>/types/*pb.go` by `oasyce_sdk/crypto/_gen_schemas.py`. The chain's Go struct tags are the single source of truth for field numbers, wire types, and gogoproto customtypes — hand-maintained drift cannot recur.
+  - Regenerate with `python -m oasyce_sdk.crypto._gen_schemas ~/Desktop/oasyce-chain`
+  - Fields the generic encoder cannot represent (repeated Coin/Any/nested Msg, `map[string]int64`, custom Go structs) become explicit `# SKIP` comments so drift is visible in `git diff`.
+- `signer.fork_sigil()` now uses chain-canonical field names (`public_key`, `mutation` as string) instead of SDK-local names (`child_public_key`, `mutation_hex` as base64 bytes).
+
+### Added
+
+- `tests/test_protobuf.py` — byte-for-byte wire regression guard for `MsgGenesis` lineage/state_root layout and `MsgFork` field names.
+
 ## [0.11.0] - 2026-04-07
 
 ### Added

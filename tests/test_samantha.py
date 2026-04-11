@@ -107,6 +107,107 @@ class TestMemory:
 
         mem.close()
 
+    def test_recall_handles_punctuation_and_versions(self, tmp_path):
+        """Free-form user input must never crash FTS5.
+
+        Real production traffic on 2026-04-11 surfaced
+        ``sqlite3.OperationalError: fts5: syntax error near "."`` when
+        ``recall`` was called with a stimulus containing a version
+        string. The fix sanitises every query through the token
+        extractor before MATCH — these inputs would have raised before
+        the fix and must now return cleanly.
+        """
+        from oasyce_sdk.samantha.memory import Memory
+
+        mem = Memory(db_path=tmp_path / "test.db")
+        mem.save("Released oasyce-sdk version 0.11.3 to PyPI", "release")
+        mem.save("user_id 5 escalated the dispute", "incident")
+
+        # Version strings: dot is an FTS5 column-qualifier operator
+        hits = mem.recall("0.11.3")
+        assert any("0.11.3" in f.content for f in hits)
+
+        # Colon: FTS5 column qualifier
+        hits = mem.recall("user_id:5")
+        assert any("user_id" in f.content for f in hits)
+
+        # Stray operator-only input — must not raise, returns []
+        assert mem.recall("....") == []
+        assert mem.recall("---") == []
+        assert mem.recall("") == []
+
+        # Quoted phrases must not break — embedded double quotes
+        mem.save('she said "hello world"', "quote")
+        hits = mem.recall('"hello world"')
+        assert any("hello world" in f.content for f in hits)
+
+        mem.close()
+
+    def test_search_messages_handles_punctuation(self, tmp_path):
+        """The same sanitisation contract for verbatim message search."""
+        from oasyce_sdk.samantha.memory import Memory
+
+        mem = Memory(db_path=tmp_path / "test.db")
+        mem.log_message("user", "deploy oasyce-sdk 0.11.3 to ECS now", session_id=1)
+        mem.log_message("assistant", "rolled back to 0.11.2 — investigate", session_id=1)
+        # Whitespace-delimited so FTS5's unicode61 tokenizer produces a
+        # standalone "天气" token (it does no CJK word segmentation, so
+        # contiguous CJK runs become one token).
+        mem.log_message("user", "今天 天气 不错", session_id=1)
+
+        # Version string in user content
+        hits = mem.search_messages("0.11.3")
+        assert any("0.11.3" in m.content for m in hits)
+
+        # Punctuation-only — must not raise, returns empty list
+        assert mem.search_messages("...") == []
+        assert mem.search_messages("") == []
+        assert mem.search_messages("   ") == []
+
+        # Unicode (Chinese) input must not crash AND must match the token.
+        hits = mem.search_messages("天气")
+        assert any("天气" in m.content for m in hits)
+
+        # Pure-CJK punctuation-laden input must not crash even when no
+        # token survives sanitisation (the realistic "user typed only
+        # 。。。 by accident" case).
+        assert mem.search_messages("。。。") == []
+
+        mem.close()
+
+    def test_fts5_query_helper_directly(self):
+        """Unit-test the sanitiser in isolation.
+
+        Documents the contract every caller relies on:
+        - operator-only input → empty string
+        - whitespace-only input → empty string
+        - tokens are quoted as literal phrases
+        - embedded double quotes are doubled (FTS5 escape rule)
+        - Unicode word characters are preserved
+        """
+        from oasyce_sdk.samantha.memory import _fts5_query
+
+        assert _fts5_query("") == ""
+        assert _fts5_query(None) == ""  # type: ignore[arg-type]
+        assert _fts5_query("....") == ""
+        assert _fts5_query("---") == ""
+        assert _fts5_query("   ") == ""
+
+        # Single token
+        assert _fts5_query("coffee") == '"coffee"'
+
+        # Version string → two tokens (dot is a separator, not a token char)
+        assert _fts5_query("0.11.3") == '"0" "11" "3"'
+
+        # Colon-qualifier neutralised
+        assert _fts5_query("user_id:5") == '"user_id" "5"'
+
+        # Embedded double quote is doubled per FTS5 escape rule
+        assert _fts5_query('say "hi"') == '"say" "hi"'
+
+        # CJK preserved
+        assert _fts5_query("你好世界") == '"你好世界"'
+
 
 # ── Constitution ──────────────────────────────────────────────────
 

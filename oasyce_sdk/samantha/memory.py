@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -22,6 +23,31 @@ from typing import ClassVar, NamedTuple
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = Path.home() / ".oasyce" / "samantha" / "memory.db"
+
+
+# FTS5 has its own query syntax: ``:`` ``.`` ``-`` ``+`` ``*`` ``^`` ``"`` and
+# bareword phrases all have meaning. User input like "0.11.3" or
+# "user_id:5" raises ``sqlite3.OperationalError: fts5: syntax error``
+# when passed directly to ``MATCH ?``. The safe pattern is to extract
+# alphanumeric/unicode word tokens and quote each as a literal phrase.
+# An empty result means "nothing to search for" — callers must treat it
+# as zero matches rather than as an error.
+_FTS_TOKEN = re.compile(r"\w+", re.UNICODE)
+
+
+def _fts5_query(text: str) -> str:
+    """Convert free-form user text into a safe FTS5 MATCH expression.
+
+    Returns ``""`` when no usable tokens remain — callers should treat
+    that as "no results" without executing the query.
+    """
+    tokens = _FTS_TOKEN.findall(text or "")
+    if not tokens:
+        return ""
+    # Quoting each token as a literal phrase neutralises every FTS5
+    # operator while preserving token-level matching semantics. Embedded
+    # double quotes are escaped per FTS5 spec by doubling them.
+    return " ".join(f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens)
 
 
 class Fact(NamedTuple):
@@ -146,7 +172,16 @@ class Memory:
         return cur.lastrowid  # type: ignore[return-value]
 
     def recall(self, query: str, limit: int = 5) -> list[Fact]:
-        """Search facts by relevance (FTS5 match + recency)."""
+        """Search facts by relevance (FTS5 match + recency).
+
+        Free-form ``query`` is sanitised through ``_fts5_query`` so that
+        version strings, punctuation, and bare colons cannot raise an
+        ``OperationalError``. An empty sanitised query short-circuits to
+        an empty result list — there is nothing meaningful to search for.
+        """
+        safe = _fts5_query(query)
+        if not safe:
+            return []
         rows = self._conn.execute(
             """
             SELECT f.id, f.content, f.category, f.created_at, f.access_count
@@ -156,7 +191,7 @@ class Memory:
             ORDER BY facts_fts.rank
             LIMIT ?
             """,
-            (query, limit),
+            (safe, limit),
         ).fetchall()
         # Update access counts
         now = datetime.now(timezone.utc).isoformat()
@@ -198,8 +233,15 @@ class Memory:
         return cur.lastrowid  # type: ignore[return-value]
 
     def search_messages(self, query: str, limit: int = 5) -> list[Message]:
-        """FTS5 search across verbatim messages, ranked by relevance."""
-        if not query.strip():
+        """FTS5 search across verbatim messages, ranked by relevance.
+
+        Same sanitisation contract as ``recall``: free-form ``query`` is
+        token-extracted through ``_fts5_query`` before being passed to
+        FTS5, so user content with version numbers, dotted identifiers,
+        or stray punctuation cannot raise ``fts5: syntax error``.
+        """
+        safe = _fts5_query(query)
+        if not safe:
             return []
         rows = self._conn.execute(
             """
@@ -210,7 +252,7 @@ class Memory:
             ORDER BY messages_fts.rank
             LIMIT ?
             """,
-            (query, limit),
+            (safe, limit),
         ).fetchall()
         return [Message(*r) for r in rows]
 

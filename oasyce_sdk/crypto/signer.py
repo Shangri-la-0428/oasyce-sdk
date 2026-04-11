@@ -652,19 +652,24 @@ class NativeSigner:
         parent_sigil_id: str,
         child_public_key_hex: str,
         fork_mode: int = 0,
-        mutation_hex: str = "",
+        mutation: str = "",
         metadata: str = "",
     ) -> TxResult:
-        """Fork a child Sigil from a parent (Lamarckian inheritance)."""
+        """Fork a child Sigil from a parent (Lamarckian inheritance).
+
+        Field names match the chain's ``MsgFork`` proto: ``public_key`` is
+        the child's secp256k1 pubkey and ``mutation`` is a free-form string
+        (e.g. a JSON blob describing divergences from the parent state).
+        """
         fields = {
             "signer": self.wallet.address,
             "parent_sigil_id": parent_sigil_id,
-            "child_public_key": base64.b64encode(bytes.fromhex(child_public_key_hex)).decode(),
+            "public_key": base64.b64encode(bytes.fromhex(child_public_key_hex)).decode(),
         }
         if fork_mode:
             fields["fork_mode"] = fork_mode
-        if mutation_hex:
-            fields["mutation"] = base64.b64encode(bytes.fromhex(mutation_hex)).decode()
+        if mutation:
+            fields["mutation"] = mutation
         if metadata:
             fields["metadata"] = metadata
         return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgFork", fields)])

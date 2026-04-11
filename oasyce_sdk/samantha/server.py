@@ -158,9 +158,11 @@ class Samantha:
     """
 
     def __init__(self, config: SamanthaConfig):
+        from ..client import OasyceClient
+        from ..sigil import SigilManager, resolve_identity
+
         self.config = config
         self.constitution = load_constitution()
-        self._sigil = None
         self._sessions: dict[int, Session] = {}
         self._sessions_lock = threading.Lock()
 
@@ -175,23 +177,43 @@ class Samantha:
         # Tool registry
         self._tools: ToolRegistry = build_default_registry()
 
+        # The Loop. Identity/runtime seam is explicit at the call site —
+        # Samantha resolves whatever identity is available (local wallet
+        # on the Mac dev box, ``Identity.null()`` on the ECS server where
+        # chain signing happens elsewhere per the Chain.Creator constraint),
+        # then hands it to SigilManager. Making the seam visible here is
+        # the projection of ``project_identity_principal_vision``: when
+        # the end state lands and AI is principal instead of delegate,
+        # only this one line changes — Samantha will call a different
+        # Identity factory, and SigilManager's body stays untouched.
+        #
+        # Eager construction — any failure here is a real bug or
+        # misconfiguration that must surface at startup, not silently
+        # degrade at first request. Substrate-only mode (no local wallet)
+        # is a normal operational state and does NOT raise.
+        chain_client = OasyceClient(config.chain_url)
+        identity = resolve_identity(
+            client=chain_client,
+            chain_id=config.chain_id,
+        )
+        self.sigil = SigilManager(
+            identity=identity,
+            chain_url=config.chain_url,
+            chain_id=config.chain_id,
+            psyche_url=config.psyche_url,
+            thronglets_url=config.thronglets_url,
+        )
+        logger.info(
+            "Samantha runtime: mode=%s sigil_id=%s chain=%s psyche=%s thronglets=%s",
+            self.sigil.mode,
+            self.sigil.sigil_id or "(none)",
+            config.chain_url,
+            config.psyche_url,
+            config.thronglets_url,
+        )
+
         # Bounded thread pool for async stimulus processing
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="samantha")
-
-    @property
-    def sigil(self):
-        if self._sigil is None:
-            try:
-                from ..sigil import SigilManager
-                self._sigil = SigilManager(
-                    chain_url=self.config.chain_url,
-                    chain_id=self.config.chain_id,
-                    psyche_url=self.config.psyche_url,
-                    thronglets_url=self.config.thronglets_url,
-                )
-            except Exception:
-                logger.warning("SigilManager unavailable", exc_info=True)
-        return self._sigil
 
     def submit(self, stimulus: Stimulus) -> None:
         """Submit stimulus for async processing. Bounded thread pool."""
@@ -252,45 +274,30 @@ class Samantha:
     def _perceive(self, stimulus: Stimulus):
         """Perceive is constitutive: always return a Perception, never None.
 
-        Three sources of self/world knowledge (all optional, degrade gracefully):
+        Three sources of self/world knowledge — all degrade gracefully inside
+        the Loop, so this method is straight-line orchestration with no
+        defensive guards:
           1. Psyche ReplyEnvelope — kernel + contract (via sigil.perceive)
           2. Thronglets capability query — collective experience (via sigil.perceive)
-          3. Thronglets ambient priors — failure residue + success priors for this context
+          3. Thronglets ambient priors — failure residue + success priors
 
-        When Psyche is unavailable, fall back to a baseline kernel. A default
-        kernel isn't "no state" — it's the baseline self-state.
+        ``sigil.perceive`` is constitutive: it always returns a Perception
+        with at least a baseline kernel, even when Psyche/Thronglets are
+        unreachable. Ambient priors are best-effort — a network failure
+        there is logged at debug and the Plan continues without them.
         """
-        from ..agent.runtime import Perception
-        from ..agent.psyche_client import SubjectivityKernel
-
         context = f"{stimulus.kind}: {stimulus.content[:200]}"
-        perception: Perception
-        if self.sigil:
-            try:
-                perception = self.sigil.perceive(context)
-            except Exception:
-                logger.debug("perceive failed", exc_info=True)
-                perception = Perception(
-                    kernel=SubjectivityKernel(), capabilities=[], signals=[]
-                )
-        else:
-            perception = Perception(
-                kernel=SubjectivityKernel(), capabilities=[], signals=[]
-            )
+        perception = self.sigil.perceive(context)
 
-        # Ambient priors — collective intelligence about similar situations.
-        # Separate from the perceive() call so Psyche+Thronglets query failures
-        # don't cascade into losing priors that could steer the Planner.
-        if self.sigil:
-            try:
-                goal = "build" if stimulus.kind == "chat" else "explore"
-                perception.ambient_priors = self.sigil.thronglets.ambient_priors(
-                    stimulus.content[:200],
-                    goal=goal,
-                    space=self.sigil.space,
-                )
-            except Exception:
-                logger.debug("ambient_priors unavailable", exc_info=True)
+        try:
+            goal = "build" if stimulus.kind == "chat" else "explore"
+            perception.ambient_priors = self.sigil.thronglets.ambient_priors(
+                stimulus.content[:200],
+                goal=goal,
+                space=self.sigil.space,
+            )
+        except Exception:
+            logger.debug("ambient_priors unavailable", exc_info=True)
 
         return perception
 
@@ -422,8 +429,8 @@ class Samantha:
             app=self.app,
             memory=memory,
             user_id=self.config.user_id,
-            chain_client=self.sigil.client if self.sigil else None,
-            chain_address=self.sigil.address if self.sigil else "",
+            chain_client=self.sigil.client,
+            chain_address=self.sigil.address,
             samantha_session=sess,
         )
 
@@ -469,7 +476,7 @@ class Samantha:
             self.send_reply(stimulus.session_id, response)
 
     def _reflect(self, stimulus: Stimulus, response: str, perception) -> None:
-        if not self.sigil or not response:
+        if not response:
             return
         try:
             self.sigil.act(

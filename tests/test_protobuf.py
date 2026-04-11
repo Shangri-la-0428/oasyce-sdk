@@ -6,6 +6,19 @@ from oasyce_sdk.crypto.protobuf import MSG_SCHEMAS, encode_msg
 from oasyce_sdk.crypto.signer import NativeSigner, TxResult
 
 
+def _varint(value: int) -> bytes:
+    out = bytearray()
+    while value > 0x7F:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value & 0x7F)
+    return bytes(out)
+
+
+def _tag(field_number: int, wire_type: int) -> bytes:
+    return _varint((field_number << 3) | wire_type)
+
+
 def test_all_signer_messages_have_protobuf_support():
     signer_source = (
         Path(__file__).resolve().parents[1] / "oasyce_sdk" / "crypto" / "signer.py"
@@ -62,6 +75,77 @@ def test_encode_delegate_exec_message_with_inner_any():
     assert b"/cosmos.bank.v1beta1.MsgSend" in encoded
     assert b"oasyce1target" in encoded
     assert b"uoas" in encoded
+
+
+def test_msg_genesis_lineage_round_trips_with_chain_canonical_field_numbers():
+    """Regression guard for the MSG_SCHEMAS drift that put lineage and
+    state_root under each other's field numbers.  Chain canonical layout:
+
+        signer     = 1  (string)
+        public_key = 2  (bytes)
+        lineage    = 3  (repeated string)
+        state_root = 4  (bytes)
+        metadata   = 5  (string)
+    """
+    parent_sigil = "SIG_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    pubkey = bytes.fromhex("02" + "11" * 32)  # 33-byte compressed secp256k1
+    state_root = bytes.fromhex("ab" * 32)
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgGenesis",
+        {
+            "signer": "oasyce1signer",
+            "public_key": base64.b64encode(pubkey).decode(),
+            "lineage": [parent_sigil],
+            "state_root": base64.b64encode(state_root).decode(),
+            "metadata": '{"name":"Joi"}',
+        },
+    )
+
+    # Manually construct the expected wire bytes in canonical order:
+    signer_bytes = b"oasyce1signer"
+    lineage_bytes = parent_sigil.encode()
+    metadata_bytes = b'{"name":"Joi"}'
+    expected = (
+        _tag(1, 2) + _varint(len(signer_bytes)) + signer_bytes
+        + _tag(2, 2) + _varint(len(pubkey)) + pubkey
+        + _tag(3, 2) + _varint(len(lineage_bytes)) + lineage_bytes
+        + _tag(4, 2) + _varint(len(state_root)) + state_root
+        + _tag(5, 2) + _varint(len(metadata_bytes)) + metadata_bytes
+    )
+    assert encoded == expected, (
+        f"MsgGenesis wire bytes drift — regenerate msg_schemas.py from chain."
+        f"\n  got:      {encoded.hex()}"
+        f"\n  expected: {expected.hex()}"
+    )
+
+    # Sanity: the parent Sigil ID must appear under field 3 (lineage), NOT
+    # under field 4 (state_root) where the buggy schema placed it.
+    lineage_tag = _tag(3, 2)
+    state_root_tag = _tag(4, 2)
+    # The parent Sigil ID starts right after `lineage_tag + varint(len)`.
+    lineage_prefix = lineage_tag + _varint(len(lineage_bytes))
+    assert lineage_prefix + lineage_bytes in encoded
+    # It must not appear under field 4.
+    assert state_root_tag + _varint(len(lineage_bytes)) + lineage_bytes not in encoded
+
+
+def test_msg_fork_uses_chain_canonical_field_names():
+    """MsgFork.public_key (not child_public_key) and mutation as string."""
+    child_pubkey = bytes.fromhex("03" + "22" * 32)
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgFork",
+        {
+            "signer": "oasyce1parent",
+            "parent_sigil_id": "SIG_parent",
+            "public_key": base64.b64encode(child_pubkey).decode(),
+            "mutation": '{"trait":"curious"}',
+        },
+    )
+    # Field 3 is the child pubkey (bytes)
+    assert _tag(3, 2) + _varint(len(child_pubkey)) + child_pubkey in encoded
+    # Field 5 is mutation encoded verbatim as string bytes (no base64 wrapper)
+    mutation_bytes = b'{"trait":"curious"}'
+    assert _tag(5, 2) + _varint(len(mutation_bytes)) + mutation_bytes in encoded
 
 
 def test_encode_anchor_trace_and_batch_messages():
