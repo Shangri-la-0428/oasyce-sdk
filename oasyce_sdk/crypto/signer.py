@@ -693,6 +693,27 @@ class NativeSigner:
             fields["metadata"] = metadata
         return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgMerge", fields)])
 
+    def pulse_sigil(
+        self,
+        sigil_id: str,
+        dimensions: Optional[Dict[str, int]] = None,
+    ) -> TxResult:
+        """Send a Pulse heartbeat for a Sigil across one or more dimensions.
+
+        ``dimensions`` is a mapping from dimension name (e.g. ``"psyche"``,
+        ``"thronglets"``, ``"economy"``) to a monotonically-increasing
+        heartbeat value — typically a timestamp or block height.  The chain
+        stores the latest value per dimension; an empty or omitted mapping
+        sends a bare pulse that still advances no dimension.
+        """
+        fields: Dict[str, Any] = {
+            "signer": self.wallet.address,
+            "sigil_id": sigil_id,
+        }
+        if dimensions:
+            fields["dimensions"] = {str(k): int(v) for k, v in dimensions.items()}
+        return self.sign_and_broadcast([("/oasyce.sigil.v1.MsgPulse", fields)])
+
     def __repr__(self) -> str:
         return (
             f"NativeSigner(address={self.wallet.address!r}, principal={self.principal!r}, "

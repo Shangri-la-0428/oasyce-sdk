@@ -10,7 +10,7 @@ Wire format reference: https://protobuf.dev/programming-guides/encoding/
 """
 
 import base64
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Mapping, Tuple
 
 # ---------------------------------------------------------------------------
 # Protobuf wire types
@@ -120,6 +120,117 @@ def _encode_repeated_message(field_number: int, messages: List[bytes]) -> bytes:
     for m in messages:
         result += _encode_tag(field_number, LENGTH_DELIMITED) + _encode_varint(len(m)) + m
     return result
+
+
+# ---------------------------------------------------------------------------
+# Map field encoding
+# ---------------------------------------------------------------------------
+#
+# Proto3 maps are serialized as a repeated ``<Name>Entry`` synthetic message:
+#
+#     <outer_tag> <entry_len> <inner_key_tag> <key_bytes> <inner_val_tag> <val_bytes>
+#
+# Each ``<Name>Entry`` has key=field 1 and value=field 2.  Keys are written
+# unconditionally (matching gogoproto's generated Marshal), values obey the
+# usual proto3 default-omission rule so v=0 / v="" / v=false are elided.
+#
+# For determinism we sort entries by the key's byte representation, so two
+# semantically equivalent maps encode to byte-identical payloads regardless
+# of insertion order.  This matches the output of protoc's deterministic
+# marshal mode used by Cosmos SDK v0.50 signing.
+
+
+def _encode_scalar_key(field_number: int, kind: str, value: Any) -> bytes:
+    """Encode a map key — key tag is always written, even for default values.
+
+    Only scalar kinds usable as proto map keys are supported.
+    """
+    if kind == "string":
+        data = str(value).encode("utf-8")
+        return _encode_tag(field_number, LENGTH_DELIMITED) + _encode_varint(len(data)) + data
+    if kind in ("uint64", "uint32", "int64", "int32"):
+        return _encode_tag(field_number, VARINT) + _encode_varint(int(value))
+    if kind == "bool":
+        return _encode_tag(field_number, VARINT) + _encode_varint(1 if value else 0)
+    raise ValueError(f"unsupported map key kind: {kind!r}")
+
+
+def _encode_scalar_value(field_number: int, kind: str, value: Any) -> bytes:
+    """Encode a map value — default values are omitted per proto3 rules.
+
+    Kinds here are the same F_* scalar constants used by the top-level
+    encoder dispatch.  bytes accepts either a base64 string (matching the
+    JSON-field convention used by ``encode_msg``) or raw ``bytes``.
+    """
+    if kind == "string":
+        s = str(value)
+        if not s:
+            return b""
+        data = s.encode("utf-8")
+        return _encode_tag(field_number, LENGTH_DELIMITED) + _encode_varint(len(data)) + data
+    if kind == "bytes":
+        if isinstance(value, str):
+            value = base64.b64decode(value)
+        if not value:
+            return b""
+        return _encode_tag(field_number, LENGTH_DELIMITED) + _encode_varint(len(value)) + value
+    if kind in ("uint64", "uint32", "int64", "int32"):
+        v = int(value)
+        if v == 0:
+            return b""
+        return _encode_tag(field_number, VARINT) + _encode_varint(v)
+    if kind == "bool":
+        if not value:
+            return b""
+        return _encode_tag(field_number, VARINT) + _encode_varint(1)
+    raise ValueError(f"unsupported map value kind: {kind!r}")
+
+
+def _sorted_map_keys(keys: List[Any], key_kind: str) -> List[Any]:
+    """Return ``keys`` in canonical order for deterministic map encoding.
+
+    String keys are compared by their UTF-8 byte representation, which is
+    what Go's native ``sort.Strings`` does and what gogoproto's deterministic
+    marshal produces on the chain side.  Integer and bool keys sort by their
+    natural value.
+    """
+    if key_kind == "string":
+        return sorted(keys, key=lambda k: str(k).encode("utf-8"))
+    if key_kind in ("uint64", "uint32", "int64", "int32"):
+        return sorted(keys, key=lambda k: int(k))
+    if key_kind == "bool":
+        return sorted(keys, key=lambda k: 1 if k else 0)
+    return list(keys)
+
+
+def _encode_map(
+    field_number: int,
+    entries: Mapping[Any, Any],
+    key_kind: str,
+    value_kind: str,
+) -> bytes:
+    """Encode a proto map as a sequence of synthetic entry messages."""
+    if not entries:
+        return b""
+    result = b""
+    for k in _sorted_map_keys(list(entries.keys()), key_kind):
+        entry = _encode_scalar_key(1, key_kind, k) + _encode_scalar_value(
+            2, value_kind, entries[k]
+        )
+        result += (
+            _encode_tag(field_number, LENGTH_DELIMITED)
+            + _encode_varint(len(entry))
+            + entry
+        )
+    return result
+
+
+def _parse_map_kind(kind: str) -> Tuple[str, str]:
+    """Split a ``map_<key>_<value>`` schema kind into its components."""
+    parts = kind.split("_", 2)
+    if len(parts) != 3 or parts[0] != "map" or not parts[1] or not parts[2]:
+        raise ValueError(f"malformed map kind: {kind!r}")
+    return parts[1], parts[2]
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +345,13 @@ F_REPEATED_BYTES = "repeated_bytes"
 #
 # Imperatively-encoded messages (repeated Coin/Any/nested Msg) live directly
 # in this file as ``_encode_msg_*`` helpers — see ``encode_msg`` below.
-from .msg_schemas import MSG_SCHEMAS  # re-exported for callers
+from . import msg_schemas as _msg_schemas
+
+MSG_SCHEMAS = _msg_schemas.MSG_SCHEMAS
+# ``NESTED_SCHEMAS`` was introduced after ``MSG_SCHEMAS``.  Fall back to an
+# empty dict so the generator can bootstrap against an older ``msg_schemas``
+# that predates the nested dispatch before being regenerated in the same run.
+NESTED_SCHEMAS = getattr(_msg_schemas, "NESTED_SCHEMAS", {})
 
 # Enum mappings for fields that use F_ENUM
 ENUM_VALUES = {
@@ -263,26 +380,19 @@ ENUM_VALUES = {
 # Generic message encoder
 # ---------------------------------------------------------------------------
 
-def encode_msg(type_url: str, fields: Dict[str, Any]) -> bytes:
-    """Encode a message body from its type_url and field dict.
+def _encode_from_schema(
+    schema: List[Tuple[str, int, str]],
+    fields: Mapping[str, Any],
+    type_url: str,
+) -> bytes:
+    """Encode a dict of fields against a schema list.
 
-    The field dict uses the same JSON keys as the build_*() methods in
-    client.py, so callers can pass them directly.
-
-    Returns the encoded message body (NOT wrapped in Any yet).
+    Shared between the top-level ``encode_msg`` dispatch and the nested
+    message dispatch (``nested:<fqn>`` / ``repeated_nested:<fqn>`` kinds), so
+    recursion through arbitrarily deep non-``Msg`` proto types reuses the
+    same scalar/enum/coin/map encoders.  ``type_url`` is only used for error
+    messages to locate the faulty field during drift between chain and SDK.
     """
-    # Special case: MsgSend has repeated Coin for amount
-    if type_url == "/cosmos.bank.v1beta1.MsgSend":
-        return _encode_msg_send(fields)
-    if type_url == "/oasyce.delegate.v1.MsgExec":
-        return _encode_msg_exec(fields)
-    if type_url == "/oasyce.anchor.v1.MsgAnchorBatch":
-        return _encode_msg_anchor_batch(fields)
-
-    schema = MSG_SCHEMAS.get(type_url)
-    if schema is None:
-        raise ValueError(f"Unknown message type: {type_url}")
-
     result = b""
     for json_key, field_num, field_type in schema:
         value = fields.get(json_key)
@@ -318,8 +428,92 @@ def encode_msg(type_url: str, fields: Dict[str, Any]) -> bytes:
         elif field_type == F_REPEATED_BYTES:
             if isinstance(value, list):
                 result += _encode_repeated_bytes(field_num, value)
+        elif field_type.startswith("map_"):
+            key_kind, value_kind = _parse_map_kind(field_type)
+            if isinstance(value, Mapping):
+                result += _encode_map(field_num, value, key_kind, value_kind)
+            elif value:
+                raise TypeError(
+                    f"field {json_key!r} expects a mapping for map kind {field_type!r}, "
+                    f"got {type(value).__name__}"
+                )
+        elif field_type.startswith("nested:"):
+            fqn = field_type[len("nested:") :]
+            nested_schema = NESTED_SCHEMAS.get(fqn)
+            if nested_schema is None:
+                raise ValueError(
+                    f"encode_msg: unknown nested schema {fqn!r} for {json_key!r} "
+                    f"in {type_url} (regenerate msg_schemas.py?)"
+                )
+            if not isinstance(value, Mapping):
+                raise TypeError(
+                    f"field {json_key!r} expects a mapping for nested kind "
+                    f"{field_type!r}, got {type(value).__name__}"
+                )
+            inner = _encode_from_schema(nested_schema, value, type_url)
+            # Emit length-delimited submsg even when ``inner`` is empty: the
+            # caller made the field explicit by passing a (possibly empty)
+            # dict, matching gogoproto's nullable=false behaviour.
+            result += (
+                _encode_tag(field_num, LENGTH_DELIMITED)
+                + _encode_varint(len(inner))
+                + inner
+            )
+        elif field_type.startswith("repeated_nested:"):
+            fqn = field_type[len("repeated_nested:") :]
+            nested_schema = NESTED_SCHEMAS.get(fqn)
+            if nested_schema is None:
+                raise ValueError(
+                    f"encode_msg: unknown nested schema {fqn!r} for {json_key!r} "
+                    f"in {type_url} (regenerate msg_schemas.py?)"
+                )
+            if not isinstance(value, (list, tuple)):
+                raise TypeError(
+                    f"field {json_key!r} expects a list for repeated nested kind "
+                    f"{field_type!r}, got {type(value).__name__}"
+                )
+            for idx, item in enumerate(value):
+                if not isinstance(item, Mapping):
+                    raise TypeError(
+                        f"{json_key!r}[{idx}] in {type_url} must be a mapping for "
+                        f"nested kind {field_type!r}, got {type(item).__name__}"
+                    )
+                inner = _encode_from_schema(nested_schema, item, type_url)
+                result += (
+                    _encode_tag(field_num, LENGTH_DELIMITED)
+                    + _encode_varint(len(inner))
+                    + inner
+                )
+        else:
+            raise ValueError(
+                f"encode_msg: unknown field kind {field_type!r} for {json_key!r} "
+                f"in {type_url}"
+            )
 
     return result
+
+
+def encode_msg(type_url: str, fields: Dict[str, Any]) -> bytes:
+    """Encode a message body from its type_url and field dict.
+
+    The field dict uses the same JSON keys as the build_*() methods in
+    client.py, so callers can pass them directly.
+
+    Returns the encoded message body (NOT wrapped in Any yet).
+    """
+    # Special case: MsgSend has repeated Coin for amount
+    if type_url == "/cosmos.bank.v1beta1.MsgSend":
+        return _encode_msg_send(fields)
+    if type_url == "/oasyce.delegate.v1.MsgExec":
+        return _encode_msg_exec(fields)
+    if type_url == "/oasyce.anchor.v1.MsgAnchorBatch":
+        return _encode_msg_anchor_batch(fields)
+
+    schema = MSG_SCHEMAS.get(type_url)
+    if schema is None:
+        raise ValueError(f"Unknown message type: {type_url}")
+
+    return _encode_from_schema(schema, fields, type_url)
 
 
 def _encode_coin_from_dict(coin: Dict[str, str]) -> bytes:

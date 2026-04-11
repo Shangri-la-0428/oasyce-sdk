@@ -6,9 +6,12 @@ Regenerate with::
 
 Source of truth: ``oasyce-chain/x/<module>/types/*pb.go`` struct tags.
 
-Each entry maps a protobuf type URL to a list of
-``(field_name, field_number, kind)`` tuples, where ``kind`` matches
-the ``F_*`` constants in :mod:`oasyce_sdk.crypto.protobuf`.
+``MSG_SCHEMAS`` maps a protobuf type URL to a list of
+``(field_name, field_number, kind)`` tuples.  ``NESTED_SCHEMAS`` is
+keyed by fully-qualified proto name (no leading slash) and stores the
+same tuple shape for non-``Msg`` structs referenced by ``nested:<fqn>``
+or ``repeated_nested:<fqn>`` kinds.  ``kind`` values match the ``F_*``
+constants in :mod:`oasyce_sdk.crypto.protobuf`.
 """
 
 from typing import Dict, List, Tuple
@@ -119,7 +122,7 @@ MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
         ("content_hash", 4, "string"),
         ("rights_type", 5, "enum"),
         ("tags", 6, "repeated_string"),
-        # SKIP name='co_creators' number=7 — repeated Go type '[]CoCreator' not supported by generic encoder
+        ("co_creators", 7, "repeated_nested:oasyce.datarights.v1.CoCreator"),
         ("parent_asset_id", 8, "string"),
         ("service_url", 9, "string"),
     ],
@@ -229,7 +232,7 @@ MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
     "/oasyce.sigil.v1.MsgPulse": [
         ("signer", 1, "string"),
         ("sigil_id", 2, "string"),
-        # SKIP name='dimensions' number=3 — repeated Go type 'map[string]int64' not supported by generic encoder
+        ("dimensions", 3, "map_string_uint64"),
     ],
     "/oasyce.sigil.v1.MsgUnbond": [
         ("signer", 1, "string"),
@@ -237,7 +240,7 @@ MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
     ],
     "/oasyce.sigil.v1.MsgUpdateParams": [
         ("authority", 1, "string"),
-        # SKIP name='params' number=2 — nested message Go type 'Params' not supported
+        ("params", 2, "nested:oasyce.sigil.v1.Params"),
     ],
     "/oasyce.work.v1.MsgCommitResult": [
         ("executor", 1, "string"),
@@ -279,5 +282,17 @@ MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
         ("supported_task_types", 2, "repeated_string"),
         ("max_compute_units", 3, "uint64"),
         ("active", 4, "bool"),
+    ],
+}
+
+NESTED_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
+    "oasyce.datarights.v1.CoCreator": [
+        ("address", 1, "string"),
+        ("share_bps", 2, "uint32"),
+    ],
+    "oasyce.sigil.v1.Params": [
+        ("dormant_threshold", 1, "uint64"),
+        ("dissolve_threshold", 2, "uint64"),
+        ("submit_window", 3, "uint64"),
     ],
 }

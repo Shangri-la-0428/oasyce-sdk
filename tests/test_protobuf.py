@@ -2,7 +2,14 @@ import base64
 from pathlib import Path
 from types import SimpleNamespace
 
-from oasyce_sdk.crypto.protobuf import MSG_SCHEMAS, encode_msg
+import pytest
+
+from oasyce_sdk.crypto.protobuf import MSG_SCHEMAS, NESTED_SCHEMAS, encode_msg
+from oasyce_sdk.crypto.protobuf import (
+    _encode_from_schema,
+    _encode_map,
+    _parse_map_kind,
+)
 from oasyce_sdk.crypto.signer import NativeSigner, TxResult
 
 
@@ -374,3 +381,457 @@ def test_delegated_signer_keeps_identity_and_delegate_control_messages_direct():
             },
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Map-field support — MsgPulse.dimensions (map<string, int64>)
+# ---------------------------------------------------------------------------
+
+
+def _map_entry(key: str, value: int) -> bytes:
+    """Build the inner ``<Name>Entry`` bytes for a string→int map entry.
+
+    Mirrors the gogoproto layout: key is field 1 (bytes wire), value is
+    field 2 (varint wire) and is omitted when zero.
+    """
+    kb = key.encode("utf-8")
+    entry = _tag(1, 2) + _varint(len(kb)) + kb
+    if value != 0:
+        entry += _tag(2, 0) + _varint(value)
+    return entry
+
+
+def _map_field(field_number: int, entries: list[tuple[str, int]]) -> bytes:
+    """Build the full wire bytes for a map field given its sorted entries."""
+    out = b""
+    for k, v in entries:
+        e = _map_entry(k, v)
+        out += _tag(field_number, 2) + _varint(len(e)) + e
+    return out
+
+
+def test_msg_pulse_schema_entry_is_generated_from_chain_proto():
+    """``MsgPulse.dimensions`` must be classified as a map kind, not skipped.
+
+    Regression guard for the ``# SKIP`` comment that the generator used to
+    emit for ``map[string]int64`` fields.  If the classifier regresses, the
+    schema entry will either go missing or be listed with fewer fields.
+    """
+    schema = MSG_SCHEMAS["/oasyce.sigil.v1.MsgPulse"]
+    assert ("signer", 1, "string") in schema
+    assert ("sigil_id", 2, "string") in schema
+    # map value is classified as uint64 (int64 and uint64 share the varint
+    # wire representation — see _MAP_SCALAR_KIND in _gen_schemas.py).
+    assert ("dimensions", 3, "map_string_uint64") in schema
+
+
+def test_encode_msg_pulse_with_dimensions_matches_chain_wire_format():
+    """Wire-byte equality check for MsgPulse with a populated dimensions map.
+
+    Entries must be sorted lexicographically by their UTF-8 key bytes so that
+    the SDK's output matches Cosmos SDK v0.50's deterministic sign-mode
+    marshal on the chain side — otherwise signatures would not verify.
+    """
+    signer_bytes = b"oasyce1pulser"
+    sigil_bytes = b"SIG_pulsepulsepulsepulsepulsepul"
+
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgPulse",
+        {
+            "signer": signer_bytes.decode(),
+            "sigil_id": sigil_bytes.decode(),
+            # Intentionally out of order — encoder must sort.
+            "dimensions": {"thronglets": 5, "psyche": 3, "economy": 7},
+        },
+    )
+
+    expected = (
+        _tag(1, 2) + _varint(len(signer_bytes)) + signer_bytes
+        + _tag(2, 2) + _varint(len(sigil_bytes)) + sigil_bytes
+        + _map_field(3, [("economy", 7), ("psyche", 3), ("thronglets", 5)])
+    )
+    assert encoded == expected, (
+        "MsgPulse wire bytes drift."
+        f"\n  got:      {encoded.hex()}"
+        f"\n  expected: {expected.hex()}"
+    )
+
+
+def test_encode_msg_pulse_dimensions_sort_is_insertion_order_independent():
+    """Two dicts with the same entries must encode to byte-identical bytes."""
+    base_fields = {"signer": "oasyce1a", "sigil_id": "SIG_x"}
+    a = encode_msg(
+        "/oasyce.sigil.v1.MsgPulse",
+        {**base_fields, "dimensions": {"c": 3, "a": 1, "b": 2}},
+    )
+    b = encode_msg(
+        "/oasyce.sigil.v1.MsgPulse",
+        {**base_fields, "dimensions": {"a": 1, "b": 2, "c": 3}},
+    )
+    assert a == b
+
+
+def test_encode_msg_pulse_dimension_with_zero_value_omits_value_but_writes_key():
+    """Gogoproto Marshal writes the key unconditionally but omits value=0.
+
+    The SDK encoder must match this exactly or the wire bytes diverge from
+    what the chain's verifier would re-serialize for signature checking.
+    """
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgPulse",
+        {
+            "signer": "oasyce1a",
+            "sigil_id": "SIG_x",
+            "dimensions": {"idle": 0},
+        },
+    )
+    # Entry is key-only: tag(1,2) + len("idle")=4 + b"idle"
+    key_bytes = b"idle"
+    expected_entry = _tag(1, 2) + _varint(len(key_bytes)) + key_bytes
+    expected_field = _tag(3, 2) + _varint(len(expected_entry)) + expected_entry
+    assert expected_field in encoded
+    # And the value tag 0x10 must NOT appear in the dimensions portion.
+    dims_start = encoded.index(_tag(3, 2))
+    assert b"\x10" not in encoded[dims_start:]
+
+
+def test_encode_msg_pulse_omits_dimensions_field_when_empty():
+    """An empty dimensions map produces zero bytes for field 3."""
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgPulse",
+        {"signer": "oasyce1a", "sigil_id": "SIG_x", "dimensions": {}},
+    )
+    assert _tag(3, 2) not in encoded
+
+
+def test_encode_msg_pulse_omits_dimensions_field_when_missing():
+    """A missing dimensions key behaves the same as an empty map."""
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgPulse",
+        {"signer": "oasyce1a", "sigil_id": "SIG_x"},
+    )
+    assert _tag(3, 2) not in encoded
+
+
+def test_encode_msg_pulse_rejects_non_mapping_dimensions():
+    """Passing a list where a map is expected must fail loudly, not silently."""
+    with pytest.raises(TypeError, match="map"):
+        encode_msg(
+            "/oasyce.sigil.v1.MsgPulse",
+            {
+                "signer": "oasyce1a",
+                "sigil_id": "SIG_x",
+                "dimensions": [("psyche", 1)],
+            },
+        )
+
+
+def test_parse_map_kind_accepts_valid_forms_and_rejects_garbage():
+    assert _parse_map_kind("map_string_uint64") == ("string", "uint64")
+    assert _parse_map_kind("map_string_int64") == ("string", "int64")
+    assert _parse_map_kind("map_uint32_string") == ("uint32", "string")
+    for bad in ("map_", "map_string", "mapstringstring", "map__string"):
+        with pytest.raises(ValueError, match="malformed map kind"):
+            _parse_map_kind(bad)
+
+
+def test_encode_map_helper_sorts_by_key_bytes_not_python_ordering():
+    """Keys with non-ASCII bytes must sort by UTF-8 byte order to match Go."""
+    # "é" in UTF-8 is 0xc3 0xa9, which is > any ASCII letter byte.
+    # So sorted order is: "a", "z", "é" — not Python's default unicode sort
+    # (which also happens to agree here, but we want to pin the contract).
+    encoded = _encode_map(
+        field_number=3,
+        entries={"é": 3, "a": 1, "z": 2},
+        key_kind="string",
+        value_kind="uint64",
+    )
+    expected = _map_field(
+        3, [("a", 1), ("z", 2), ("é", 3)]
+    )
+    assert encoded == expected
+
+
+def test_pulse_sigil_signer_method_builds_expected_message():
+    signer = RecordingSigner("oasyce1pulser")
+    signer.pulse_sigil(
+        "SIG_abcabcabcabcabcabcabcabcabcabcab",
+        {"psyche": 42, "thronglets": 99},
+    )
+    assert signer.recorded == [
+        (
+            "/oasyce.sigil.v1.MsgPulse",
+            {
+                "signer": "oasyce1pulser",
+                "sigil_id": "SIG_abcabcabcabcabcabcabcabcabcabcab",
+                "dimensions": {"psyche": 42, "thronglets": 99},
+            },
+        )
+    ]
+
+
+def test_pulse_sigil_signer_method_elides_empty_dimensions():
+    signer = RecordingSigner("oasyce1pulser")
+    signer.pulse_sigil("SIG_x")
+    assert signer.recorded == [
+        (
+            "/oasyce.sigil.v1.MsgPulse",
+            {"signer": "oasyce1pulser", "sigil_id": "SIG_x"},
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Nested-message support — MsgRegisterDataAsset.co_creators (repeated),
+#                         MsgUpdateParams.params (single nested)
+# ---------------------------------------------------------------------------
+
+
+def _len_prefixed(field_number: int, inner: bytes) -> bytes:
+    """Wrap ``inner`` as a length-delimited field — shared by all nested tests."""
+    return _tag(field_number, 2) + _varint(len(inner)) + inner
+
+
+def _co_creator_bytes(address: str, share_bps: int) -> bytes:
+    """Construct the CoCreator submessage body the chain would marshal.
+
+    Matches the gogoproto output from ``oasyce-chain/x/datarights/types/
+    types.pb.go:CoCreator.MarshalToSizedBuffer``: field 1 is ``address``
+    (string, bytes wire), field 2 is ``share_bps`` (varint, omitted when 0).
+    """
+    ab = address.encode("utf-8")
+    body = b""
+    if ab:
+        body += _tag(1, 2) + _varint(len(ab)) + ab
+    if share_bps:
+        body += _tag(2, 0) + _varint(share_bps)
+    return body
+
+
+def test_msg_register_data_asset_schema_entry_uses_repeated_nested_co_creator():
+    """``co_creators`` must be classified, not emitted as a ``# SKIP`` comment.
+
+    Regression guard for the long-standing gap where the generator dropped
+    ``[]CoCreator`` because it had no handler for repeated nested messages.
+    """
+    schema = MSG_SCHEMAS["/oasyce.datarights.v1.MsgRegisterDataAsset"]
+    assert (
+        "co_creators",
+        7,
+        "repeated_nested:oasyce.datarights.v1.CoCreator",
+    ) in schema
+
+
+def test_nested_schemas_registers_co_creator_with_chain_field_numbers():
+    """Field numbers and kinds must mirror the chain's CoCreator struct tags."""
+    assert NESTED_SCHEMAS["oasyce.datarights.v1.CoCreator"] == [
+        ("address", 1, "string"),
+        ("share_bps", 2, "uint32"),
+    ]
+
+
+def test_encode_msg_register_data_asset_with_co_creators_matches_wire_format():
+    """Byte-exact check: a populated co_creators list must encode the same
+    bytes the chain would produce, so signature verification holds under
+    SIGN_MODE_DIRECT where the client's bytes are canonical.
+    """
+    creator = "oasyce1creator"
+    name = "test asset"
+    description = "desc"
+    content_hash = "hash"
+    tags = ["a", "b"]
+    co1 = _co_creator_bytes("oasyce1co1", 3000)
+    co2 = _co_creator_bytes("oasyce1co2", 7000)
+    service_url = "https://svc"
+
+    encoded = encode_msg(
+        "/oasyce.datarights.v1.MsgRegisterDataAsset",
+        {
+            "creator": creator,
+            "name": name,
+            "description": description,
+            "content_hash": content_hash,
+            "rights_type": 1,
+            "tags": tags,
+            "co_creators": [
+                {"address": "oasyce1co1", "share_bps": 3000},
+                {"address": "oasyce1co2", "share_bps": 7000},
+            ],
+            "service_url": service_url,
+        },
+    )
+
+    expected = (
+        _tag(1, 2) + _varint(len(creator)) + creator.encode()
+        + _tag(2, 2) + _varint(len(name)) + name.encode()
+        + _tag(3, 2) + _varint(len(description)) + description.encode()
+        + _tag(4, 2) + _varint(len(content_hash)) + content_hash.encode()
+        + _tag(5, 0) + _varint(1)
+        + _tag(6, 2) + _varint(1) + b"a"
+        + _tag(6, 2) + _varint(1) + b"b"
+        + _len_prefixed(7, co1)
+        + _len_prefixed(7, co2)
+        + _tag(9, 2) + _varint(len(service_url)) + service_url.encode()
+    )
+    assert encoded == expected, (
+        "MsgRegisterDataAsset wire bytes drift."
+        f"\n  got:      {encoded.hex()}"
+        f"\n  expected: {expected.hex()}"
+    )
+
+
+def test_encode_msg_register_data_asset_co_creator_list_order_is_preserved():
+    """The chain walks the slice in the same order it was built — the SDK
+    must not sort ``co_creators`` because shares bind to specific addresses.
+    """
+    order_a = [
+        {"address": "oasyce1first", "share_bps": 5000},
+        {"address": "oasyce1second", "share_bps": 5000},
+    ]
+    order_b = list(reversed(order_a))
+
+    a = encode_msg(
+        "/oasyce.datarights.v1.MsgRegisterDataAsset",
+        {"creator": "c", "name": "n", "co_creators": order_a},
+    )
+    b = encode_msg(
+        "/oasyce.datarights.v1.MsgRegisterDataAsset",
+        {"creator": "c", "name": "n", "co_creators": order_b},
+    )
+    assert a != b
+    assert a.index(b"oasyce1first") < a.index(b"oasyce1second")
+    assert b.index(b"oasyce1second") < b.index(b"oasyce1first")
+
+
+def test_encode_msg_register_data_asset_empty_co_creators_omits_field():
+    """An empty list must produce zero bytes for field 7, matching gogoproto."""
+    encoded = encode_msg(
+        "/oasyce.datarights.v1.MsgRegisterDataAsset",
+        {"creator": "c", "name": "n", "co_creators": []},
+    )
+    assert _tag(7, 2) not in encoded
+
+
+def test_encode_msg_register_data_asset_missing_co_creators_omits_field():
+    """A missing key behaves exactly the same as an empty list."""
+    encoded = encode_msg(
+        "/oasyce.datarights.v1.MsgRegisterDataAsset",
+        {"creator": "c", "name": "n"},
+    )
+    assert _tag(7, 2) not in encoded
+
+
+def test_encode_msg_register_data_asset_rejects_non_list_co_creators():
+    """Passing a dict where a list is expected must fail loudly, not silently."""
+    with pytest.raises(TypeError, match="repeated nested"):
+        encode_msg(
+            "/oasyce.datarights.v1.MsgRegisterDataAsset",
+            {"creator": "c", "name": "n", "co_creators": {"addr": "x"}},
+        )
+
+
+def test_encode_msg_register_data_asset_rejects_non_mapping_list_item():
+    """Each slot in the list must be a mapping — tuple/str inputs are a bug."""
+    with pytest.raises(TypeError, match="must be a mapping"):
+        encode_msg(
+            "/oasyce.datarights.v1.MsgRegisterDataAsset",
+            {
+                "creator": "c",
+                "name": "n",
+                "co_creators": [("oasyce1co1", 3000)],
+            },
+        )
+
+
+def test_msg_update_params_schema_entry_is_nested_sigil_params():
+    """``params`` must be classified as a single nested message, not SKIPped."""
+    schema = MSG_SCHEMAS["/oasyce.sigil.v1.MsgUpdateParams"]
+    assert ("params", 2, "nested:oasyce.sigil.v1.Params") in schema
+
+
+def test_nested_schemas_registers_sigil_params_with_three_threshold_fields():
+    assert NESTED_SCHEMAS["oasyce.sigil.v1.Params"] == [
+        ("dormant_threshold", 1, "uint64"),
+        ("dissolve_threshold", 2, "uint64"),
+        ("submit_window", 3, "uint64"),
+    ]
+
+
+def test_encode_msg_update_params_with_full_params_matches_wire_format():
+    """Byte-exact check for a single (non-repeated) nested message field."""
+    authority = "oasyce1auth"
+
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgUpdateParams",
+        {
+            "authority": authority,
+            "params": {
+                "dormant_threshold": 100,
+                "dissolve_threshold": 200,
+                "submit_window": 50,
+            },
+        },
+    )
+
+    inner = (
+        _tag(1, 0) + _varint(100)
+        + _tag(2, 0) + _varint(200)
+        + _tag(3, 0) + _varint(50)
+    )
+    expected = (
+        _tag(1, 2) + _varint(len(authority)) + authority.encode()
+        + _len_prefixed(2, inner)
+    )
+    assert encoded == expected, (
+        "MsgUpdateParams wire bytes drift."
+        f"\n  got:      {encoded.hex()}"
+        f"\n  expected: {expected.hex()}"
+    )
+
+
+def test_encode_msg_update_params_with_empty_params_emits_length_zero_submsg():
+    """Gogoproto nullable=false emits an empty submsg even when the struct is
+    all zero values.  The SDK must do the same when the caller passes ``{}``
+    so that a SIGN_MODE_DIRECT client can produce bytes the chain re-parses
+    into an identical ``Params{}`` struct for signature checking.
+    """
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgUpdateParams",
+        {"authority": "a", "params": {}},
+    )
+    # authority + tag(2,2) + varint(0)
+    assert encoded.endswith(_tag(2, 2) + _varint(0))
+
+
+def test_encode_msg_update_params_missing_params_key_omits_field():
+    """When the caller supplies no ``params`` key at all, field 2 is absent."""
+    encoded = encode_msg(
+        "/oasyce.sigil.v1.MsgUpdateParams",
+        {"authority": "a"},
+    )
+    assert _tag(2, 2) not in encoded
+
+
+def test_encode_msg_update_params_rejects_non_mapping_params():
+    """Passing a list where a mapping is expected must fail loudly."""
+    with pytest.raises(TypeError, match="nested"):
+        encode_msg(
+            "/oasyce.sigil.v1.MsgUpdateParams",
+            {"authority": "a", "params": [("dormant_threshold", 1)]},
+        )
+
+
+def test_encode_from_schema_raises_on_unknown_nested_fqn():
+    """Using a kind that points at a nested FQN missing from NESTED_SCHEMAS
+    must fail immediately with a clear pointer to the drifted generator,
+    not silently produce a zero-length field.
+    """
+    bogus_schema = [("child", 1, "nested:oasyce.nonexistent.v1.Ghost")]
+    with pytest.raises(ValueError, match="unknown nested schema"):
+        _encode_from_schema(bogus_schema, {"child": {}}, "/fake.TypeUrl")
+
+
+def test_encode_from_schema_raises_on_unknown_repeated_nested_fqn():
+    bogus_schema = [("kids", 2, "repeated_nested:oasyce.nonexistent.v1.Ghost")]
+    with pytest.raises(ValueError, match="unknown nested schema"):
+        _encode_from_schema(bogus_schema, {"kids": [{}]}, "/fake.TypeUrl")
