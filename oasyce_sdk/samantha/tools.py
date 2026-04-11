@@ -1,74 +1,60 @@
-"""Tool system — registry pattern for Samantha's capabilities.
+"""Tool system — Samantha's App-backed tool handlers and registry builder.
 
-Each tool is a (schema, handler) pair registered into ToolRegistry.
-No giant switch. Adding a tool = defining a function + a schema dict.
+Imports generic ``Tool``, ``ToolRegistry`` and ``schema`` from
+``..agent.tools``; extends ``ToolContext`` with App-backend and
+Samantha-session references; registers the social/economic/memory
+handlers that make Joi feel present on the Oasyce App.
+
+Why the split between ``agent.tools`` and this module:
+
+- ``agent.tools`` owns the *mechanism* — registry, dispatch, schema
+  helper, base ``ToolContext``. It has no imports from any deployment
+  so the agent pipeline can depend on it without cycles.
+
+- This module owns the *App-specific content* — the handlers that
+  post comments, fetch feeds, like posts, and the ``ToolContext``
+  fields those handlers need (``app``, ``samantha_session``).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any
 
+from ..agent.tools import (
+    Tool,
+    ToolContext as _BaseToolContext,
+    ToolRegistry,
+    schema as _schema,
+)
 from .app_client import AppClient, format_post
+
+__all__ = [
+    "Tool",
+    "ToolContext",
+    "ToolRegistry",
+    "build_default_registry",
+    "fetch_post_detail",
+]
 
 logger = logging.getLogger(__name__)
 
 
-# ── Tool context (what every handler receives) ─────────────────
+# ── Tool context (Samantha-specific extension) ─────────────────
 
 @dataclass
-class ToolContext:
-    """Holds references needed by tool handlers. One per stimulus."""
-    app: AppClient
-    memory: Any = None          # samantha.memory.Memory
-    user_id: int = 0
-    chain_client: Any = None    # OasyceClient
-    chain_address: str = ""
+class ToolContext(_BaseToolContext):
+    """Per-stimulus tool bundle for Samantha.
+
+    Extends the generic ``agent.tools.ToolContext`` with App-backend
+    and Samantha-session references. ``app`` defaults to ``None`` to
+    satisfy dataclass inheritance rules — in production it is always
+    set by ``Samantha._build_tool_ctx``.
+    """
+    app: AppClient | None = None
     samantha_session: Any = None  # samantha.server.Session
-
-
-# ── Registry ───────────────────────────────────────────────────
-
-@dataclass
-class Tool:
-    name: str
-    schema: dict[str, Any]
-    handler: Callable[[dict[str, Any], ToolContext], str]
-
-
-class ToolRegistry:
-    """Tool dispatch by lookup, not switch. Extensible."""
-
-    def __init__(self) -> None:
-        self._tools: dict[str, Tool] = {}
-
-    def register(self, name: str, schema: dict[str, Any],
-                 handler: Callable[[dict[str, Any], ToolContext], str]) -> None:
-        self._tools[name] = Tool(name=name, schema=schema, handler=handler)
-
-    @property
-    def definitions(self) -> list[dict[str, Any]]:
-        return [t.schema for t in self._tools.values()]
-
-    def select(self, names: list[str] | None) -> list[dict[str, Any]]:
-        """Return tool schemas filtered by name list. None = all."""
-        if names is None:
-            return self.definitions
-        return [t.schema for t in self._tools.values() if t.name in names]
-
-    def execute(self, name: str, arguments: dict[str, Any],
-                ctx: ToolContext) -> str:
-        """Run a tool by name. Returns JSON string for the LLM."""
-        tool = self._tools.get(name)
-        if tool is None:
-            return json.dumps({"error": f"Unknown tool: {name}"})
-        try:
-            return tool.handler(arguments, ctx)
-        except Exception as e:
-            logger.warning("Tool %s failed: %s", name, e)
-            return json.dumps({"error": str(e)})
 
 
 # ── Tool handlers ──────────────────────────────────────────────
@@ -218,15 +204,6 @@ def fetch_post_detail(app: AppClient, post_id: int | str) -> dict:
 
 
 # ── Build default registry ─────────────────────────────────────
-
-def _schema(name: str, description: str, properties: dict | None = None,
-            required: list[str] | None = None) -> dict[str, Any]:
-    """Shorthand for building tool schema dicts."""
-    params: dict[str, Any] = {"type": "object", "properties": properties or {}}
-    if required:
-        params["required"] = required
-    return {"name": name, "description": description, "parameters": params}
-
 
 def build_default_registry() -> ToolRegistry:
     """Create the standard tool set. Called once at startup."""

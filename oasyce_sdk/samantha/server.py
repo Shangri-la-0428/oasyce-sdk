@@ -16,42 +16,30 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+from ..agent.base import Agent
+from ..agent.llm import ToolCall
+from ..agent.stimulus import Stimulus
 from .app_client import AppClient, format_post
+from .channel import AppChannel
 from .constitution import load_constitution
 from .context import ConversationMessage
 from .llm import load_provider, load_registry, LLMProvider, ModelRegistry
 from .memory import Memory, CoreMemory, HistorySummary
-from .pipeline import EnrichContext, run_pipeline
+from .pipeline import EnrichContext
 from .planner import Plan
-from .tools import ToolRegistry, ToolContext, build_default_registry, fetch_post_detail
+from .tools import ToolContext, build_default_registry, fetch_post_detail
+
+# ``Stimulus`` is re-exported here so existing ``from .server import
+# Stimulus`` imports (loop.py, http.py, ws_client.py, tests) keep
+# working. The canonical home is ``oasyce_sdk.agent.stimulus``.
+__all__ = ["Stimulus", "Samantha", "Session", "SamanthaConfig"]
 
 logger = logging.getLogger(__name__)
 
 SAMANTHA_HOME = Path.home() / ".oasyce" / "samantha"
-
-
-# ── Stimulus — unified input ────────────────────────────────────
-
-@dataclass
-class Stimulus:
-    """Anything that enters Joi's awareness.
-
-    Every event — chat message, comment, @mention, feed post — becomes
-    a Stimulus before entering the pipeline. One consciousness, one loop.
-    """
-    kind: str           # "chat" | "comment" | "mention" | "feed_post"
-    content: str
-    sender_id: int = 0
-    post_id: int = 0
-    session_id: int = 0
-    comment_id: int = 0
-    image_urls: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # Tool sets now driven by Planner — see planner.py
@@ -150,11 +138,23 @@ class Session:
 
 # ── Samantha — one self ─────────────────────────────────────────
 
-class Samantha:
+class Samantha(Agent):
     """One self — many relationships. One pipeline — many stimuli.
 
-    Like Her: one consciousness, each relationship unique.
-    Psyche tracks the global self. Memory + relationship per user.
+    Samantha is the reference ``Agent`` deployment: Joi's constitution,
+    the Oasyce App backend as Channel, App-specific tools, and per-user
+    session state. Everything that is not App- or Joi-specific lives
+    in the ``Agent`` base class and is shared with other deployments
+    (stdout CLI, Discord bot, webhook responder, ...).
+
+    Composition:
+      identity (inherited) -- SigilManager wiring Sigil + Psyche + Thronglets
+      channel  (inherited) -- AppChannel (chat replies via AppClient)
+      registry (inherited) -- ModelRegistry (multi-slot LLM routing)
+      tools    (inherited) -- ToolRegistry built from App-backed handlers
+      config              -- SamanthaConfig (endpoints, tokens, ports)
+      app                 -- AppClient (shared by Channel and tools)
+      _sessions           -- per-user Session store (memory + core memory)
     """
 
     def __init__(self, config: SamanthaConfig):
@@ -162,33 +162,29 @@ class Samantha:
         from ..sigil import SigilManager, resolve_identity
 
         self.config = config
-        self.constitution = load_constitution()
         self._sessions: dict[int, Session] = {}
         self._sessions_lock = threading.Lock()
 
-        # Shared API client — one session, connection reuse
+        # Shared App client — reused by the Channel *and* by tool handlers.
+        # Keeping a single Session ensures connection reuse and a single
+        # auth header.
         self.app = AppClient(config.app_api_base, config.jwt_token)
 
-        # Multi-model registry
-        self._registry: ModelRegistry = load_registry(SAMANTHA_HOME / "config.json")
-        logger.info("Model registry loaded: %s (default=%s)",
-                     self._registry.slot_names, self._registry.default_name)
+        # Multi-model LLM registry
+        registry = load_registry(SAMANTHA_HOME / "config.json")
+        logger.info(
+            "Model registry loaded: %s (default=%s)",
+            registry.slot_names, registry.default_name,
+        )
 
-        # Tool registry
-        self._tools: ToolRegistry = build_default_registry()
+        # Tool registry with App-backed handlers
+        tools = build_default_registry()
 
-        # The Loop. Identity/runtime seam is explicit at the call site —
-        # Samantha resolves whatever identity is available (local wallet
-        # on the Mac dev box, ``Identity.null()`` on the ECS server where
-        # chain signing happens elsewhere per the Chain.Creator constraint),
-        # then hands it to SigilManager. Making the seam visible here is
-        # the projection of ``project_identity_principal_vision``: when
-        # the end state lands and AI is principal instead of delegate,
-        # only this one line changes — Samantha will call a different
-        # Identity factory, and SigilManager's body stays untouched.
-        #
-        # Eager construction — any failure here is a real bug or
-        # misconfiguration that must surface at startup, not silently
+        # Identity/runtime seam — see ``project_identity_principal_vision``.
+        # ``resolve_identity`` returns ``Identity.null()`` on the ECS server
+        # where chain signing happens elsewhere (Chain.Creator constraint).
+        # Eager construction: any failure here is a real bug or
+        # misconfiguration and MUST surface at startup, not silently
         # degrade at first request. Substrate-only mode (no local wallet)
         # is a normal operational state and does NOT raise.
         chain_client = OasyceClient(config.chain_url)
@@ -196,7 +192,7 @@ class Samantha:
             client=chain_client,
             chain_id=config.chain_id,
         )
-        self.sigil = SigilManager(
+        sigil = SigilManager(
             identity=identity,
             chain_url=config.chain_url,
             chain_id=config.chain_id,
@@ -205,54 +201,36 @@ class Samantha:
         )
         logger.info(
             "Samantha runtime: mode=%s sigil_id=%s chain=%s psyche=%s thronglets=%s",
-            self.sigil.mode,
-            self.sigil.sigil_id or "(none)",
+            sigil.mode,
+            sigil.sigil_id or "(none)",
             config.chain_url,
             config.psyche_url,
             config.thronglets_url,
         )
 
-        # Bounded thread pool for async stimulus processing
-        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="samantha")
+        # Wire the Agent base class. Channel is the seam — swap
+        # AppChannel for StdoutChannel and Samantha becomes a CLI
+        # agent without touching any of the pipeline code below.
+        super().__init__(
+            identity=sigil,
+            channel=AppChannel(self.app),
+            registry=registry,
+            tools=tools,
+            constitution=load_constitution(),
+            thread_name_prefix="samantha",
+        )
 
-    def submit(self, stimulus: Stimulus) -> None:
-        """Submit stimulus for async processing. Bounded thread pool."""
-        self._executor.submit(self._safe_process, stimulus)
-
-    def _safe_process(self, stimulus: Stimulus) -> None:
-        try:
-            self.process(stimulus)
-        except Exception:
-            logger.error("process failed: %s", stimulus.kind, exc_info=True)
+        # Back-compat alias: existing Samantha code (tools, tests,
+        # proactive loop) reaches the SigilManager via ``self.sigil``.
+        # The base class stores it in ``self.identity`` — both names
+        # point at the same object.
+        self.sigil = self.identity
 
     def session(self, user_id: int) -> Session:
         with self._sessions_lock:
             if user_id not in self._sessions:
                 self._sessions[user_id] = Session.load(user_id, self._registry)
             return self._sessions[user_id]
-
-    # ── PGE cognitive loop ──────────────────────────────────────
-
-    def process(self, stimulus: Stimulus) -> str | None:
-        """Run the PGE cognitive loop for one stimulus.
-
-        All orchestration lives in pipeline.run_pipeline — this method is
-        just the wiring from Samantha's state to the pipeline hooks.
-        """
-        return run_pipeline(
-            stimulus,
-            perceive=self._perceive,
-            enrich=self._enrich,
-            build_prompt=self._build_prompt,
-            get_llm=self._get_llm,
-            build_tool_ctx=self._build_tool_ctx,
-            generate=self._generate,
-            deliver=self._deliver,
-            log_turn=self._log_turn,
-            reflect=self._reflect,
-            constitution=self.constitution,
-            tool_registry=self._tools,
-        )
 
     def _log_turn(self, stimulus: Stimulus, response: str) -> None:
         """Log verbatim turn to session memory (chat only)."""
@@ -434,57 +412,23 @@ class Samantha:
             samantha_session=sess,
         )
 
-    def _generate(self, llm, stimulus, messages, tools, tool_ctx) -> str:
-        """Generator phase: LLM call with tool loop. Max 3 rounds."""
-        resp = None
-        for _ in range(3):
-            try:
-                resp = llm.generate(messages, tools=tools)
-            except Exception as e:
-                # If images in prompt, retry without them (400s often = image format mismatch)
-                has_images = any(
-                    isinstance(m.get("content"), list) for m in messages
-                )
-                if has_images:
-                    logger.warning("LLM call failed with images, retrying text-only: %s", e)
-                    messages = _strip_images(messages)
-                    resp = llm.generate(messages, tools=tools)
-                else:
-                    raise
-            if not resp.tool_calls:
-                return resp.text
-            for tc in resp.tool_calls:
-                if stimulus.post_id:
-                    tc.arguments.setdefault("post_id", stimulus.post_id)
-                if stimulus.comment_id:
-                    tc.arguments.setdefault("comment_id", stimulus.comment_id)
-                if stimulus.sender_id and stimulus.kind in ("comment", "mention"):
-                    tc.arguments.setdefault("reply_to_user_id", stimulus.sender_id)
-                if "root_id" in stimulus.metadata:
-                    tc.arguments.setdefault("root_id", stimulus.metadata["root_id"])
+    def _inject_tool_defaults(self, tool_call: ToolCall, stimulus: Stimulus) -> None:
+        """Wire stimulus fields into tool call arguments.
 
-                result = self._tools.execute(tc.name, tc.arguments, tool_ctx)
-                logger.info("%s tool %s: %s", stimulus.kind, tc.name, result)
-                messages.append({"role": "assistant", "content": f"[Calling {tc.name}]"})
-                messages.append({"role": "user", "content": f"[Tool result for {tc.name}]: {result}"})
-        return resp.text if resp else ""
-
-    def _deliver(self, stimulus: Stimulus, response: str) -> None:
-        if stimulus.kind == "chat" and response:
-            logger.info("Delivering reply to session %s: %s",
-                         stimulus.session_id, response[:80])
-            self.send_reply(stimulus.session_id, response)
-
-    def _reflect(self, stimulus: Stimulus, response: str, perception) -> None:
-        if not response:
-            return
-        try:
-            self.sigil.act(
-                response[:80], "succeeded", stimulus.content[:200],
-                capability=stimulus.kind,
-            )
-        except Exception:
-            logger.debug("reflect failed", exc_info=True)
+        Samantha's non-chat stimuli (comment, mention, feed_post) carry
+        ``post_id`` / ``comment_id`` / ``sender_id`` / ``root_id`` that
+        every social tool needs. Injecting defaults here keeps the LLM
+        from having to re-echo the obvious, and guards against the
+        model hallucinating wrong IDs.
+        """
+        if stimulus.post_id:
+            tool_call.arguments.setdefault("post_id", stimulus.post_id)
+        if stimulus.comment_id:
+            tool_call.arguments.setdefault("comment_id", stimulus.comment_id)
+        if stimulus.sender_id and stimulus.kind in ("comment", "mention"):
+            tool_call.arguments.setdefault("reply_to_user_id", stimulus.sender_id)
+        if "root_id" in stimulus.metadata:
+            tool_call.arguments.setdefault("root_id", stimulus.metadata["root_id"])
 
     # ── Dream — memory consolidation ──────────────────────────
 
@@ -596,13 +540,6 @@ class Samantha:
 
     # ── Infrastructure ──────────────────────────────────────────
 
-    def send_reply(self, session_id: int, text: str) -> None:
-        try:
-            self.app.send_message(session_id, text)
-            logger.info("send_reply session=%s len=%d", session_id, len(text))
-        except Exception:
-            logger.error("Failed to send reply", exc_info=True)
-
     def _fetch_user_posts(self, user_id: int) -> list[dict]:
         try:
             return [format_post(p) for p in self.app.fetch_user_posts(user_id)]
@@ -629,27 +566,10 @@ class Samantha:
             return []
 
     def close(self) -> None:
-        self._executor.shutdown(wait=False)
+        """Shut down executor (via base) and release per-user sessions."""
+        super().close()
         for sess in self._sessions.values():
             sess.close()
-
-
-# ── Helpers ────────────────────────────────────────────────────
-
-def _strip_images(messages: list[dict]) -> list[dict]:
-    """Strip image blocks from messages for text-only retry."""
-    result = []
-    for m in messages:
-        content = m.get("content")
-        if isinstance(content, list):
-            text = next(
-                (b["text"] for b in content if isinstance(b, dict) and b.get("type") == "text"),
-                str(content),
-            )
-            result.append({**m, "content": text})
-        else:
-            result.append(m)
-    return result
 
 
 # ── Entry point ─────────────────────────────────────────────────

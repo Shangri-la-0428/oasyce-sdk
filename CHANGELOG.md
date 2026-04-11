@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.11.6] - 2026-04-11
+
+### Added
+
+- **`oasyce_sdk.agent.base.Agent`** — transport-agnostic PGE runtime extracted from `Samantha`. The new base class is the symmetric twin of `SigilManager`: both are thin compositions over injected dependencies, and neither knows about concrete backends. Agent composes `identity × channel × registry × tools × constitution` and runs the full Perceive → Plan → Enrich → Generate → Evaluate → Deliver → Reflect loop. Subclasses override narrow hooks (`_perceive`, `_enrich`, `_build_prompt`, `_get_llm`, `_build_tool_ctx`, `_inject_tool_defaults`, `_log_turn`, `_reflect`) — never the pipeline body. The default `_generate` hook includes the full 3-round tool-calling loop with text-only image retry fallback.
+- **`oasyce_sdk.agent.channel.Channel`** — `@runtime_checkable` Protocol defining the output sink for an Agent. Exactly one method: `deliver(stimulus, response) -> None`. Any object with that method can drive an Agent — no inheritance, no registration. The Protocol docstring states the three invariants implementations must honour: idempotent-friendly (empty response is a no-op), no-raise on network errors (delivery failures are logged and swallowed so Reflect still runs), thread-safe (Agent dispatches stimuli through a bounded `ThreadPoolExecutor`).
+- **`oasyce_sdk.agent.tools.ToolContext`** — generic base moved from `samantha.tools` with the five fields the Agent core actually uses: `memory`, `user_id`, `chain_client`, `chain_address`, `session`. Deployments subclass this to add their own fields (e.g. `samantha.tools.ToolContext` adds `app: AppClient`). All base fields have defaults so dataclass inheritance works without ordering errors.
+- **`oasyce_sdk.samantha.channel.AppChannel`** — the reference `Channel` implementation, wrapping `AppClient.send_message`. Chat-only delivery (other stimulus kinds express their reply through tool calls in the generator phase), empty-response no-op, network exceptions swallowed and logged. This is the *output side* of App integration; the *input side* lives in `ws_client.py`.
+- **`tests/test_channel.py`** — thirteen invariant tests proving the Channel seam works:
+  - `TestChannelProtocol` — structural typing (4 tests): minimal class with `deliver` satisfies the Protocol, missing `deliver` fails, wrong method name fails, `AppChannel` satisfies.
+  - `TestAppChannel` — behaviour contract (4 tests): chat-only filter, non-chat kinds are no-op, empty-response no-op, network-failure swallow.
+  - `TestAgentDeliverySeam` — routing invariants (4 tests): `_deliver` forwards verbatim to `channel.deliver`, Agent never touches transport directly, swapping channels redirects all output, Agent accepts any Protocol impl without inheritance.
+  - `TestSeamComposability` — `identity=` + `channel=` compose cleanly: a substrate-only `SigilManager` plus a custom recording channel build a working Agent with zero glue code.
+
+### Changed
+
+- **Samantha is now an `Agent` subclass.** `samantha.server.Samantha` inherits from `oasyce_sdk.agent.base.Agent` and provides only the App-specific hooks: `_perceive` (Psyche + Thronglets ambient priors), `_enrich` (facts + verbatim messages + history + recent posts), `_build_prompt` (four stimulus kinds), `_get_llm` (per-user BYO-key override), `_build_tool_ctx` (App + session fields), `_inject_tool_defaults` (post/comment/root/reply-to wiring), `_log_turn` (verbatim message log). The pipeline body, the 3-round tool loop, the `submit`/`_safe_process`/`close` lifecycle, and the delivery hop through `self.channel.deliver` are all inherited. `Samantha` itself dropped ~250 lines of duplicated orchestration code; what remains is purely deployment-specific.
+- **Generic agent foundation moved from `samantha/` to `agent/`.** `memory.py`, `llm.py`, `context.py`, `planner.py`, `evaluator.py`, and `pipeline.py` now live under `oasyce_sdk.agent.*` and `samantha/` keeps thin re-export shims so existing `from .memory import ...` imports keep working. These modules were never Samantha-specific — they were the bottom of the agent dependency graph but had been placed under `samantha/` for historical reasons. Moving them removes the cycle risk between `agent.base` and `samantha.*` and makes it possible to build a second Agent deployment (Discord bot, CLI, webhook responder) that imports from `agent/` without pulling in any App-backend code.
+- **`Stimulus` lives at `oasyce_sdk.agent.stimulus`.** Previously declared inside `samantha.server`, it is now at the bottom of the dependency graph so both `agent.channel` and `agent.base` can reference it without creating a cycle. `samantha.server` re-exports `Stimulus` so existing `from oasyce_sdk.samantha.server import Stimulus` imports continue to work.
+
+### Why
+
+0.11.5 closed one half of the agent composition: identity became an injectable public value object so SigilManager stopped owning wallet discovery. But delivery was still hard-wired inside `Samantha.send_reply` — calling `AppClient.send_message` directly from the pipeline body. A Discord/CLI/webhook deployment was literally impossible without forking `samantha/`. That was the last place where Samantha conflated "the reference deployment" with "the reusable runtime".
+
+0.11.6 extracts the runtime. The equation that has been driving the architecture since 0.11.2 —
+
+    Agent = Identity × Channel × Substrate
+
+— is now all three seams at once. `Identity` was injected in 0.11.5. `Substrate` (Psyche + Thronglets HTTP) has always been injected. `Channel` is the final piece: a narrow Protocol, one method, no inheritance. The elegance test is stated in the Agent base class docstring: a new deployment is "subclass Agent, provide a Channel, provide tools, done" — not "copy samantha/, rename, modify". `TestSeamComposability::test_null_identity_plus_custom_channel_composes` is the load-bearing verification — it builds a working Agent from a substrate-only `SigilManager` and a 3-line recording channel, proving the two injection seams are truly independent.
+
+No hidden risks, no technical debt, no feature flag — the separation is architectural, not conditional. 340 tests pass (was 327 after 0.11.5; +13 invariant tests here).
+
 ## [0.11.5] - 2026-04-11
 
 ### Changed
