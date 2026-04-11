@@ -504,3 +504,280 @@ class TestDream:
         assert pruned == 1
         assert mem.count() == 0
         mem.close()
+
+
+# ── Tools — terminal flag + Registry ─────────────────────────────
+
+class TestToolTerminalFlag:
+    """The ``terminal`` flag is the seam that fixes multi-reply on
+    mention/comment stimuli — write-side actions complete the turn,
+    so the LLM cannot re-emit the same call across tool-loop rounds.
+    """
+
+    def test_default_tool_is_not_terminal(self):
+        from oasyce_sdk.agent.tools import ToolRegistry, schema
+
+        r = ToolRegistry()
+        r.register("noop", schema("noop", "no-op"), lambda a, c: "{}")
+        assert r.is_terminal("noop") is False
+
+    def test_register_terminal_flag(self):
+        from oasyce_sdk.agent.tools import ToolRegistry, schema
+
+        r = ToolRegistry()
+        r.register("post", schema("post", "post"), lambda a, c: "{}", terminal=True)
+        assert r.is_terminal("post") is True
+
+    def test_unknown_tool_is_not_terminal(self):
+        from oasyce_sdk.agent.tools import ToolRegistry
+
+        r = ToolRegistry()
+        # Unknown name → False, never raises
+        assert r.is_terminal("does_not_exist") is False
+
+    def test_terminal_does_not_affect_dispatch_or_schema(self):
+        """Terminal is metadata only — execute and select work the same."""
+        from oasyce_sdk.agent.tools import ToolContext, ToolRegistry, schema
+
+        calls: list[str] = []
+
+        def handler(args, ctx):
+            calls.append("called")
+            return "{\"ok\": true}"
+
+        r = ToolRegistry()
+        r.register("act", schema("act", "act"), handler, terminal=True)
+        assert "act" in {t["name"] for t in r.definitions}
+        assert r.select(["act"]) == r.definitions
+        result = r.execute("act", {}, ToolContext())
+        assert result == "{\"ok\": true}"
+        assert calls == ["called"]
+
+
+# ── Agent generator — terminal-tool break ────────────────────────
+
+class TestGenerateTerminalBreak:
+    """``Agent._generate``'s tool loop must break after a terminal call.
+
+    The bug this guards against: a single mention with an image caused
+    Samantha to post 2-3 duplicate replies because the LLM kept
+    re-emitting ``comment_on_post`` across the 3 tool-loop rounds.
+    """
+
+    @staticmethod
+    def _make_agent(tool_terminal: bool, tool_calls_per_round: int = 1):
+        from oasyce_sdk.agent.base import Agent
+        from oasyce_sdk.agent.llm import LLMResponse, ToolCall
+        from oasyce_sdk.agent.tools import ToolRegistry, schema
+
+        executed: list[str] = []
+
+        def handler(args, ctx):
+            executed.append(args.get("payload", ""))
+            return "{\"ok\": true}"
+
+        tools = ToolRegistry()
+        tools.register(
+            "fire", schema("fire", "fire"), handler, terminal=tool_terminal,
+        )
+
+        rounds_seen = {"n": 0}
+
+        class StubLLM:
+            def generate(self, messages, tools=None):
+                rounds_seen["n"] += 1
+                # Always emit tool calls — if the loop doesn't break,
+                # we'll see N rounds of duplicates.
+                tcs = [
+                    ToolCall(name="fire", arguments={"payload": f"call-{rounds_seen['n']}-{i}"})
+                    for i in range(tool_calls_per_round)
+                ]
+                return LLMResponse(text="final-text", tool_calls=tcs)
+
+        class StubRegistry:
+            def get(self, *, needs_vision: bool = False):
+                return StubLLM()
+
+        class StubIdentity:
+            client = None
+            address = ""
+
+            def perceive(self, context):
+                from oasyce_sdk.agent.psyche_client import SubjectivityKernel
+                from oasyce_sdk.agent.runtime import Perception
+                return Perception(
+                    kernel=SubjectivityKernel(),
+                    capabilities=[], signals=[],
+                )
+
+            def act(self, *a, **k):
+                pass
+
+        class NullChannel:
+            def deliver(self, stimulus, response):
+                pass
+
+        agent = Agent(
+            identity=StubIdentity(),  # type: ignore[arg-type]
+            channel=NullChannel(),  # type: ignore[arg-type]
+            registry=StubRegistry(),  # type: ignore[arg-type]
+            tools=tools,
+            constitution="test",
+        )
+        return agent, executed, rounds_seen
+
+    def test_terminal_tool_breaks_loop_after_one_round(self):
+        from oasyce_sdk.agent.stimulus import Stimulus
+
+        agent, executed, rounds = self._make_agent(tool_terminal=True)
+        try:
+            stim = Stimulus(kind="mention", content="hi")
+            agent.process(stim)
+        finally:
+            agent.close()
+
+        # Exactly one LLM round and one tool call — no duplicates.
+        assert rounds["n"] == 1
+        assert executed == ["call-1-0"]
+
+    def test_non_terminal_tool_loops_until_max_rounds(self):
+        from oasyce_sdk.agent.base import Agent
+        from oasyce_sdk.agent.stimulus import Stimulus
+
+        agent, executed, rounds = self._make_agent(tool_terminal=False)
+        try:
+            agent.process(Stimulus(kind="chat", content="hi", session_id=1))
+        finally:
+            agent.close()
+
+        # Without the terminal flag, the loop runs the full budget.
+        assert rounds["n"] == Agent.TOOL_LOOP_MAX_ROUNDS
+        assert len(executed) == Agent.TOOL_LOOP_MAX_ROUNDS
+
+    def test_terminal_with_multiple_calls_in_one_batch_runs_all_then_breaks(self):
+        """If the LLM emits two terminal calls in one response, both run.
+
+        The break happens *after* the batch — terminal does not mean
+        "abort mid-batch", it means "no more rounds".
+        """
+        from oasyce_sdk.agent.stimulus import Stimulus
+
+        agent, executed, rounds = self._make_agent(
+            tool_terminal=True, tool_calls_per_round=2,
+        )
+        try:
+            agent.process(Stimulus(kind="mention", content="hi"))
+        finally:
+            agent.close()
+
+        assert rounds["n"] == 1
+        assert executed == ["call-1-0", "call-1-1"]
+
+
+# ── Agent._plan hook ─────────────────────────────────────────────
+
+class TestAgentPlanHook:
+    """``_plan`` is the seam for layering deployment-specific rules on
+    top of the SDK rule engine. The default delegates to ``planner.plan``;
+    a subclass override can mutate the Plan after super.
+    """
+
+    def _make_agent(self, plan_override=None):
+        from oasyce_sdk.agent.base import Agent
+        from oasyce_sdk.agent.tools import ToolRegistry
+
+        class StubIdentity:
+            client = None
+            address = ""
+
+            def perceive(self, context):
+                from oasyce_sdk.agent.psyche_client import SubjectivityKernel
+                from oasyce_sdk.agent.runtime import Perception
+                return Perception(
+                    kernel=SubjectivityKernel(),
+                    capabilities=[], signals=[],
+                )
+
+            def act(self, *a, **k):
+                pass
+
+        class NullChannel:
+            def deliver(self, stimulus, response):
+                pass
+
+        class StubRegistry:
+            def get(self, *, needs_vision: bool = False):
+                from oasyce_sdk.agent.llm import LLMResponse
+
+                class _LLM:
+                    def generate(self, messages, tools=None):
+                        return LLMResponse(text="ok")
+                return _LLM()
+
+        AgentCls = Agent
+        if plan_override is not None:
+            class CustomAgent(Agent):
+                def _plan(self, stimulus, perception):
+                    p = super()._plan(stimulus, perception)
+                    plan_override(stimulus, p)
+                    return p
+            AgentCls = CustomAgent
+
+        return AgentCls(
+            identity=StubIdentity(),  # type: ignore[arg-type]
+            channel=NullChannel(),  # type: ignore[arg-type]
+            registry=StubRegistry(),  # type: ignore[arg-type]
+            tools=ToolRegistry(),
+            constitution="test",
+        )
+
+    def test_default_plan_matches_planner_default(self):
+        from oasyce_sdk.agent.planner import plan as default_plan
+        from oasyce_sdk.agent.stimulus import Stimulus
+
+        agent = self._make_agent()
+        try:
+            stim = Stimulus(kind="chat", content="hi")
+            perception = agent._perceive(stim)
+            got = agent._plan(stim, perception)
+            expected = default_plan(stim, perception)
+            assert got.intent == expected.intent
+            assert got.tools == expected.tools
+        finally:
+            agent.close()
+
+    def test_subclass_can_layer_on_top_of_super(self):
+        from oasyce_sdk.agent.stimulus import Stimulus
+
+        captured = {"stim": None}
+
+        def override(stim, plan):
+            plan.focus = "custom-focus"
+            captured["stim"] = stim
+
+        agent = self._make_agent(plan_override=override)
+        try:
+            stim = Stimulus(kind="chat", content="hi")
+            perception = agent._perceive(stim)
+            plan = agent._plan(stim, perception)
+            assert plan.focus == "custom-focus"
+            assert captured["stim"] is stim
+        finally:
+            agent.close()
+
+    def test_plan_hook_runs_during_pipeline(self):
+        """Pipeline must call ``_plan``, not ``planner.plan`` directly."""
+        from oasyce_sdk.agent.stimulus import Stimulus
+
+        called = {"n": 0}
+
+        def override(stim, plan):
+            called["n"] += 1
+
+        agent = self._make_agent(plan_override=override)
+        try:
+            agent.process(Stimulus(kind="chat", content="hi", session_id=1))
+        finally:
+            agent.close()
+
+        assert called["n"] == 1

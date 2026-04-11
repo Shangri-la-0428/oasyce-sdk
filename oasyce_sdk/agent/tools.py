@@ -73,11 +73,23 @@ class ToolContext:
 
 @dataclass
 class Tool:
-    """One tool: a schema the LLM sees, and a handler we execute."""
+    """One tool: a schema the LLM sees, and a handler we execute.
+
+    Fields:
+      name, schema, handler — the dispatch triple.
+      terminal — write-side actions that complete the turn. The
+        Generator's tool loop breaks immediately after a successful
+        terminal call, preventing the LLM from re-emitting the same
+        action across rounds (e.g. posting the same comment 2-3 times
+        on a single mention). Read tools (memory recall, balance query)
+        stay non-terminal so the LLM can synthesise a final answer
+        from the result.
+    """
 
     name: str
     schema: dict[str, Any]
     handler: Callable[[dict[str, Any], ToolContext], str]
+    terminal: bool = False
 
 
 class ToolRegistry:
@@ -91,8 +103,12 @@ class ToolRegistry:
         name: str,
         schema: dict[str, Any],
         handler: Callable[[dict[str, Any], ToolContext], str],
+        *,
+        terminal: bool = False,
     ) -> None:
-        self._tools[name] = Tool(name=name, schema=schema, handler=handler)
+        self._tools[name] = Tool(
+            name=name, schema=schema, handler=handler, terminal=terminal,
+        )
 
     @property
     def definitions(self) -> list[dict[str, Any]]:
@@ -103,6 +119,15 @@ class ToolRegistry:
         if names is None:
             return self.definitions
         return [t.schema for t in self._tools.values() if t.name in names]
+
+    def is_terminal(self, name: str) -> bool:
+        """Whether ``name`` is a terminal (turn-completing) tool.
+
+        Unknown names return False — the loop continues, the unknown-tool
+        error is surfaced to the LLM via ``execute``.
+        """
+        tool = self._tools.get(name)
+        return bool(tool and tool.terminal)
 
     def execute(
         self,

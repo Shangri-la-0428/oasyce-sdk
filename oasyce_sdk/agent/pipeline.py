@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Callable
 
 from .context import ConversationMessage, build_messages
 from .evaluator import evaluate as evaluate_response
-from .planner import Plan, plan as make_plan
+from .planner import Plan, plan as default_plan
 
 if TYPE_CHECKING:
     from .llm import LLMProvider
@@ -63,6 +63,7 @@ def run_pipeline(
     reflect: Callable[["Stimulus", str, "Perception"], None],
     constitution: str,
     tool_registry: "ToolRegistry",
+    plan_fn: Callable[["Stimulus", "Perception"], Plan] | None = None,
 ) -> str | None:
     """Run Perceive → Plan → Enrich → Generate → Evaluate → Deliver → Reflect.
 
@@ -71,6 +72,10 @@ def run_pipeline(
 
     The Plan is derived from the Perception — Psyche ResponseContract +
     Thronglets ambient priors — and then refined by GenerationControls.
+    Deployments can pass a custom ``plan_fn`` callable to layer their
+    own rules (e.g. user-defined standing instructions) on top of the
+    built-in rule engine; ``None`` falls back to ``planner.plan`` —
+    the SDK's pure rule engine.
     """
     logger.info(
         "pipeline: %s sender=%s post=%s",
@@ -81,7 +86,7 @@ def run_pipeline(
     perception = perceive(stimulus)
 
     # 2. Plan — zero cost, rule engine driven by Psyche + Thronglets
-    plan = make_plan(stimulus, perception)
+    plan = (plan_fn or default_plan)(stimulus, perception)
 
     # Psyche GenerationControls are hard limits layered over the Plan
     gc = perception.generation_controls

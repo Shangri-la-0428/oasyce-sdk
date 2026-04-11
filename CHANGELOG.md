@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.13.0] - 2026-04-12
+
+### Added
+
+- **`Tool.terminal` flag** — write-side actions (social posts, comment
+  replies, anything that completes a turn) can be marked terminal at
+  registration time:
+
+      registry.register("comment_on_post", schema, handler, terminal=True)
+
+  ``ToolRegistry.is_terminal(name)`` exposes the flag for the tool
+  loop. Default is ``False``; existing tools register unchanged.
+
+- **`Agent._plan` hook** — symmetric with `_perceive`, `_enrich`,
+  `_build_prompt`, etc. Default delegates to ``planner.plan`` so the
+  built-in Psyche/Thronglets-driven Plan stays the baseline. Subclasses
+  override to layer deployment-specific rules on top — for example
+  ``oasyce-samantha 0.2.0`` uses this seam for per-user standing
+  rules without touching the SDK Planner.
+
+- **`run_pipeline(plan_fn=...)` parameter** — accepts a custom
+  Plan-producing callable. ``None`` falls back to the SDK default.
+  This is the pipeline-side counterpart of ``Agent._plan``.
+
+### Fixed
+
+- **Tool loop no longer duplicates terminal calls.** ``Agent._generate``
+  now ends the turn after a successful terminal-tool batch, instead of
+  giving the LLM another round to re-emit the same write. This was the
+  root cause of Samantha posting 2-3 duplicate comments on a single
+  ``mention`` with an image attached: vision models occasionally
+  re-evaluate after a tool call and re-issue the same ``comment_on_post``
+  in round 2/3 of the loop.
+
+  The fix is opt-in via ``Tool.terminal=True`` — non-terminal read
+  tools (memory recall, balance query) still chain freely so the LLM
+  can synthesise a final answer from a tool result.
+
 ## [0.12.0] - 2026-04-11
 
 ### Removed

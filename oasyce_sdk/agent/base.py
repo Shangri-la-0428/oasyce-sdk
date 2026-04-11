@@ -24,6 +24,7 @@ Why this seam matters:
 Overridable hooks (all prefixed with ``_``):
 
   ``_perceive``       : stimulus → Perception (default: identity.perceive)
+  ``_plan``           : (stimulus, perception) → Plan (default: planner.plan)
   ``_enrich``         : Plan-driven context gathering (default: images only)
   ``_build_prompt``   : format the stimulus for the LLM (default: raw content)
   ``_get_llm``        : pick an LLM slot for this stimulus (default: registry)
@@ -47,7 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 from .channel import Channel
 from .pipeline import EnrichContext, run_pipeline
-from .planner import Plan
+from .planner import Plan, plan as default_plan
 from .stimulus import Stimulus
 from .tools import ToolContext, ToolRegistry
 
@@ -135,6 +136,7 @@ class Agent:
             reflect=self._reflect,
             constitution=self.constitution,
             tool_registry=self._tools,
+            plan_fn=self._plan,
         )
 
     def close(self) -> None:
@@ -163,6 +165,24 @@ class Agent:
         """
         context = f"{stimulus.kind}: {stimulus.content[:200]}"
         return self.identity.perceive(context)
+
+    def _plan(self, stimulus: Stimulus, perception: "Perception") -> Plan:
+        """(Stimulus, Perception) → Plan. Pure, zero cost.
+
+        Default delegates to ``planner.plan`` — the SDK rule engine
+        driven by Psyche ResponseContract + Thronglets ambient priors.
+        Subclasses override to layer their own rules on top, e.g.::
+
+            def _plan(self, stimulus, perception):
+                p = super()._plan(stimulus, perception)
+                if stimulus.kind == "chat" and stimulus.sender_id:
+                    self.session(stimulus.sender_id).rules.apply(stimulus, p)
+                return p
+
+        The hook receives both stimulus and perception so user-rule
+        layers can match on text *and* on Psyche state.
+        """
+        return default_plan(stimulus, perception)
 
     def _enrich(self, stimulus: Stimulus, plan: Plan) -> EnrichContext:
         """Gather per-stimulus context. Default: images only.
@@ -222,8 +242,14 @@ class Agent:
           1. Call LLM with ``messages`` + ``tools``
           2. If no tool calls, return the text
           3. Else execute each tool call via ``self._tools.execute``,
-             append results as messages, and loop
-          4. Bail after ``TOOL_LOOP_MAX_ROUNDS`` iterations
+             append results as messages
+          4. If any tool call in this round was *terminal* (a write-side
+             action that completes the turn — social posts, replies),
+             break the loop. The LLM should not get a second chance to
+             re-emit the same write on the same turn — that is exactly
+             how a single ``mention`` ended up producing two or three
+             duplicate comments.
+          5. Otherwise loop, bailing after ``TOOL_LOOP_MAX_ROUNDS``
 
         On LLM exception while images are in the prompt, retry once
         text-only — a common OpenAI-compat failure mode where the
@@ -248,6 +274,7 @@ class Agent:
                     raise
             if not resp.tool_calls:
                 return resp.text
+            terminal_called = False
             for tc in resp.tool_calls:
                 self._inject_tool_defaults(tc, stimulus)
                 result = self._tools.execute(tc.name, tc.arguments, tool_ctx)
@@ -260,6 +287,14 @@ class Agent:
                     "role": "user",
                     "content": f"[Tool result for {tc.name}]: {result}",
                 })
+                if self._tools.is_terminal(tc.name):
+                    terminal_called = True
+            if terminal_called:
+                logger.info(
+                    "%s terminal tool fired, ending turn after this round",
+                    stimulus.kind,
+                )
+                return resp.text
         return resp.text if resp else ""
 
     def _inject_tool_defaults(
