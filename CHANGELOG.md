@@ -1,5 +1,73 @@
 # Changelog
 
+## [0.12.0] - 2026-04-11
+
+### Removed
+
+- **`oasyce_sdk.samantha`** — the reference agent deployment moved out
+  of this repository into its own project,
+  [`oasyce-samantha`](https://pypi.org/project/oasyce-samantha/). The
+  SDK now ships only the reusable runtime (`oasyce_sdk.agent.*`) and
+  the identity layer (`oasyce_sdk.sigil.*`). Install both if you want
+  the full companion experience:
+
+      pip install oasyce-samantha  # pulls oasyce-sdk as a dep
+
+- **`oasyce-samantha` entry point** — removed from `pyproject.toml`.
+  The new repository owns this script via its own entry point.
+- **`oasyce samantha init` / `oasyce samantha status`** — the
+  Samantha-specific CLI subcommands have moved out of
+  `oasyce_sdk.cli`. They are now available directly on
+  `oasyce-samantha init` / `oasyce-samantha status`.
+- **`tests/test_samantha.py`** — split into two files:
+  - Tests for `oasyce_sdk.agent.*` modules (Memory, Context, Planner,
+    Evaluator, Dream helpers) now live in `tests/test_agent_modules.py`.
+  - Tests for `AppChannel`, `AppClient`, `Constitution`, App tool
+    handlers, and `Session` moved to
+    `oasyce-samantha/tests/test_samantha.py` +
+    `oasyce-samantha/tests/test_app_channel.py`.
+- **`tests/test_channel.py::TestAppChannel`** and
+  `test_app_channel_satisfies_protocol` — these depended on
+  `oasyce_sdk.samantha.channel.AppChannel` and moved to
+  `oasyce-samantha/tests/test_app_channel.py`. The generic Channel
+  Protocol tests (`TestChannelProtocol`, `TestAgentDeliverySeam`,
+  `TestSeamComposability`) stay here — they guard the seam itself,
+  not any specific deployment.
+- **`docs/SAMANTHA_ARCHITECTURE.md`** and
+  **`docs/SAMANTHA_DEPLOYMENT.md`** — these were personal deployment
+  notes for a specific Samantha instance. The new repository owns a
+  framework-focused architecture doc at
+  `oasyce-samantha/docs/ARCHITECTURE.md`.
+
+### Why
+
+0.11.6 finished the composition refactor: `Agent = Identity × Channel
+× Substrate × Tools × Constitution`, all five seams injectable. The
+SDK had everything it needed to be a pure agent-runtime library, but
+the Samantha reference deployment was still living inside the SDK's
+source tree. Two problems flowed from that:
+
+1. **Confused install story.** Someone who wanted to `pip install
+   oasyce-sdk` to build their own agent got a full Samantha CLI,
+   constitution file, and `oasyce-samantha init` flow they didn't ask
+   for. Someone who wanted to run Samantha had to understand which
+   parts of `oasyce-sdk` were the runtime and which were the
+   deployment.
+2. **Iteration friction.** Samantha's version number was pinned to the
+   SDK's release cadence even when the only changes were to the
+   constitution, the profile picker, or the init wizard.
+
+0.12.0 completes the separation: `oasyce-sdk` is the runtime library,
+`oasyce-samantha` is the reference deployment. They release
+independently. Every other deployment — Discord bots, CLI companions,
+webhook responders — is now a symmetric peer to Samantha, not a fork.
+
+No functional change inside the runtime — the modules that moved from
+`oasyce_sdk.samantha.*` to `oasyce_sdk.agent.*` back in 0.11.6 are
+still there, still importable by their new paths. The only thing this
+release removes is the `oasyce_sdk.samantha` package itself (which
+had already become thin re-export shims in 0.11.6 anyway).
+
 ## [0.11.6] - 2026-04-11
 
 ### Added

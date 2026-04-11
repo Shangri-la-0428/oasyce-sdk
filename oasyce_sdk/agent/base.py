@@ -13,9 +13,9 @@ Protocol).
 
 Why this seam matters:
 
-    Samantha    = Agent + AppChannel      + Joi constitution     + Samantha tools
-    OpenClaw    = Agent + StdoutChannel   + dev constitution     + dev tools
-    DiscordBot  = Agent + DiscordChannel  + persona              + Discord tools
+    Samantha    = Agent + AppChannel      + companion constitution + Samantha tools
+    OpenClaw    = Agent + StdoutChannel   + dev constitution       + dev tools
+    DiscordBot  = Agent + DiscordChannel  + persona                + Discord tools
 
     Each deployment is a thin subclass: provide the Channel, the
     constitution, the tool set, and any hook overrides. The pipeline,

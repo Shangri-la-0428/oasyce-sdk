@@ -1,18 +1,30 @@
-"""Tests for Samantha sidecar components."""
+"""Tests for the generic ``oasyce_sdk.agent.*`` modules.
+
+These used to live in ``tests/test_samantha.py`` back when Memory,
+Planner, Evaluator, Context, and the Dream bits were under
+``oasyce_sdk.samantha``. 0.11.6 moved them into ``oasyce_sdk.agent.*``
+so any Agent deployment can use them — and 0.12.0 finished the job
+by moving the Samantha reference deployment out to its own repository
+(``oasyce-samantha``).
+
+What remains in this file is strictly tests for modules that live
+under ``oasyce_sdk/agent/`` and depend on nothing deployment-specific:
+
+- ``agent.memory`` — SQLite-backed fact + verbatim message store
+- ``agent.context`` — layered prompt assembly
+- ``agent.planner`` — rule-engine Plan construction
+- ``agent.evaluator`` — output guard / veto
+- Dream helpers (``CoreMemory``, ``HistorySummary``) that live next to Memory
+"""
 
 from __future__ import annotations
-
-import json
-from pathlib import Path
-
-import pytest
 
 
 # ── Memory ────────────────────────────────────────────────────────
 
 class TestMemory:
     def test_save_and_recall(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
+        from oasyce_sdk.agent.memory import Memory
 
         mem = Memory(db_path=tmp_path / "test.db")
         mem.save("User likes coffee", "preference")
@@ -29,7 +41,7 @@ class TestMemory:
         mem.close()
 
     def test_all_facts(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
+        from oasyce_sdk.agent.memory import Memory
 
         mem = Memory(db_path=tmp_path / "test.db")
         mem.save("fact one", "fact")
@@ -42,7 +54,7 @@ class TestMemory:
         mem.close()
 
     def test_empty_recall(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
+        from oasyce_sdk.agent.memory import Memory
 
         mem = Memory(db_path=tmp_path / "test.db")
         results = mem.recall("nonexistent topic")
@@ -50,7 +62,7 @@ class TestMemory:
         mem.close()
 
     def test_access_count_increments(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
+        from oasyce_sdk.agent.memory import Memory
 
         mem = Memory(db_path=tmp_path / "test.db")
         mem.save("important fact about cats", "fact")
@@ -65,14 +77,15 @@ class TestMemory:
     def test_cross_thread_access(self, tmp_path):
         """Memory must be safe to use from threads other than its creator.
 
-        Samantha shares Session.memory across executor workers plus the
-        proactive loop thread. If the sqlite3 connection were bound to the
-        creating thread, every cross-thread call would raise ProgrammingError.
-        This test guards the invariant: connections are thread-local, writes
-        from any thread are durable, and cross-thread reads see each other.
+        Agents share ``Session.memory`` across executor workers plus the
+        proactive loop thread. If the sqlite3 connection were bound to
+        the creating thread, every cross-thread call would raise
+        ``ProgrammingError``. This test guards the invariant: connections
+        are thread-local, writes from any thread are durable, and
+        cross-thread reads see each other.
         """
         import threading
-        from oasyce_sdk.samantha.memory import Memory
+        from oasyce_sdk.agent.memory import Memory
 
         mem = Memory(db_path=tmp_path / "test.db")
         mem.save("main-thread fact", "main")
@@ -117,7 +130,7 @@ class TestMemory:
         extractor before MATCH — these inputs would have raised before
         the fix and must now return cleanly.
         """
-        from oasyce_sdk.samantha.memory import Memory
+        from oasyce_sdk.agent.memory import Memory
 
         mem = Memory(db_path=tmp_path / "test.db")
         mem.save("Released oasyce-sdk version 0.11.3 to PyPI", "release")
@@ -145,7 +158,7 @@ class TestMemory:
 
     def test_search_messages_handles_punctuation(self, tmp_path):
         """The same sanitisation contract for verbatim message search."""
-        from oasyce_sdk.samantha.memory import Memory
+        from oasyce_sdk.agent.memory import Memory
 
         mem = Memory(db_path=tmp_path / "test.db")
         mem.log_message("user", "deploy oasyce-sdk 0.11.3 to ECS now", session_id=1)
@@ -185,7 +198,7 @@ class TestMemory:
         - embedded double quotes are doubled (FTS5 escape rule)
         - Unicode word characters are preserved
         """
-        from oasyce_sdk.samantha.memory import _fts5_query
+        from oasyce_sdk.agent.memory import _fts5_query
 
         assert _fts5_query("") == ""
         assert _fts5_query(None) == ""  # type: ignore[arg-type]
@@ -209,31 +222,11 @@ class TestMemory:
         assert _fts5_query("你好世界") == '"你好世界"'
 
 
-# ── Constitution ──────────────────────────────────────────────────
-
-class TestConstitution:
-    def test_creates_default_if_missing(self, tmp_path):
-        from oasyce_sdk.samantha.constitution import load_constitution
-
-        path = tmp_path / "constitution.md"
-        text = load_constitution(path)
-        assert "Joi" in text
-        assert path.exists()
-
-    def test_loads_existing(self, tmp_path):
-        from oasyce_sdk.samantha.constitution import load_constitution
-
-        path = tmp_path / "constitution.md"
-        path.write_text("Custom constitution", encoding="utf-8")
-        text = load_constitution(path)
-        assert text == "Custom constitution"
-
-
 # ── Context builder ───────────────────────────────────────────────
 
 class TestContextBuilder:
     def test_minimal_context(self):
-        from oasyce_sdk.samantha.context import build_messages, ConversationMessage
+        from oasyce_sdk.agent.context import build_messages
 
         messages = build_messages(
             constitution="You are Samantha.",
@@ -247,7 +240,7 @@ class TestContextBuilder:
         assert messages[-1] == {"role": "user", "content": "Hello!"}
 
     def test_with_memories(self):
-        from oasyce_sdk.samantha.context import build_messages
+        from oasyce_sdk.agent.context import build_messages
 
         messages = build_messages(
             constitution="You are Samantha.",
@@ -264,7 +257,7 @@ class TestContextBuilder:
         assert "Meeting Thursday" in system
 
     def test_with_history(self):
-        from oasyce_sdk.samantha.context import build_messages, ConversationMessage
+        from oasyce_sdk.agent.context import build_messages, ConversationMessage
 
         messages = build_messages(
             constitution="You are Samantha.",
@@ -281,7 +274,7 @@ class TestContextBuilder:
         assert messages[2]["content"] == "Hello!"
 
     def test_with_psyche_perception(self):
-        from oasyce_sdk.samantha.context import build_messages
+        from oasyce_sdk.agent.context import build_messages
         from oasyce_sdk.agent.psyche_client import SubjectivityKernel
         from oasyce_sdk.agent.runtime import Perception
 
@@ -303,229 +296,12 @@ class TestContextBuilder:
         assert "Feeling open and engaged" in system
 
 
-# ── Tools ─────────────────────────────────────────────────────────
-
-class TestTools:
-    @staticmethod
-    def _registry():
-        from oasyce_sdk.samantha.tools import build_default_registry
-        return build_default_registry()
-
-    @staticmethod
-    def _ctx(mem):
-        from oasyce_sdk.samantha.tools import ToolContext
-        from oasyce_sdk.samantha.app_client import AppClient
-        return ToolContext(app=AppClient("http://fake"), memory=mem)
-
-    def test_save_memory_tool(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
-
-        mem = Memory(db_path=tmp_path / "test.db")
-        registry = self._registry()
-        ctx = self._ctx(mem)
-
-        result = json.loads(registry.execute("save_memory", {"content": "likes cats", "category": "preference"}, ctx))
-        assert result["saved"] is True
-        assert mem.count() == 1
-        mem.close()
-
-    def test_recall_memory_tool(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
-
-        mem = Memory(db_path=tmp_path / "test.db")
-        mem.save("user loves hiking", "preference")
-        registry = self._registry()
-        ctx = self._ctx(mem)
-
-        result = json.loads(registry.execute("recall_memory", {"query": "hiking"}, ctx))
-        assert len(result) >= 1
-        assert "hiking" in result[0]["content"]
-        mem.close()
-
-    def test_unknown_tool(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
-
-        mem = Memory(db_path=tmp_path / "test.db")
-        registry = self._registry()
-        ctx = self._ctx(mem)
-
-        result = json.loads(registry.execute("nonexistent_tool", {}, ctx))
-        assert "error" in result
-        mem.close()
-
-
-# ── Session isolation ─────────────────────────────────────────────
-
-class TestSession:
-    @staticmethod
-    def _fake_registry():
-        """Create a minimal ModelRegistry with a fake provider."""
-        from oasyce_sdk.samantha.llm import ModelSlot, ModelRegistry, LLMResponse
-
-        class FakeLLM:
-            def generate(self, messages, tools=None):
-                return LLMResponse(text="ok")
-
-        class FakeRegistry(ModelRegistry):
-            def __init__(self):
-                self._slots = {"fake": ModelSlot(name="fake", provider="openai", api_key="x", model="fake")}
-                self._default = "fake"
-                self._vision = "fake"
-                self._cache = {}
-                self._fake = FakeLLM()
-
-            def get(self, *, needs_vision=False):
-                return self._fake
-
-        return FakeRegistry()
-
-    def test_per_user_memory_isolation(self, tmp_path, monkeypatch):
-        from oasyce_sdk.samantha import server as srv
-        monkeypatch.setattr(srv, "SAMANTHA_HOME", tmp_path)
-
-        registry = self._fake_registry()
-        s1 = srv.Session.load(user_id=1001, registry=registry)
-        s2 = srv.Session.load(user_id=1002, registry=registry)
-
-        s1.memory.save("user 1001 likes tea", "preference")
-        s2.memory.save("user 1002 likes coffee", "preference")
-
-        assert s1.memory.count() == 1
-        assert s2.memory.count() == 1
-        assert "tea" in s1.memory.recall("tea")[0].content
-        assert "coffee" in s2.memory.recall("coffee")[0].content
-        # Cross-isolation: user 1 doesn't see user 2's memory
-        assert s1.memory.recall("coffee") == []
-
-        s1.close()
-        s2.close()
-
-    def test_per_user_llm_override(self, tmp_path, monkeypatch):
-        from oasyce_sdk.samantha import server as srv
-        monkeypatch.setattr(srv, "SAMANTHA_HOME", tmp_path)
-
-        # Write a per-user LLM config
-        user_dir = tmp_path / "users" / "2001"
-        user_dir.mkdir(parents=True)
-        # Invalid config — should fall back to registry
-        (user_dir / "llm.json").write_text('{"provider":"claude","api_key":""}')
-
-        registry = self._fake_registry()
-        sess = srv.Session.load(user_id=2001, registry=registry)
-        # Should fall back to registry since user config has empty key
-        llm = sess.get_llm()
-        assert llm is not None  # gets fake from registry
-        sess.close()
-
-    def test_session_tracks_active_sessions(self, tmp_path, monkeypatch):
-        from oasyce_sdk.samantha import server as srv
-        monkeypatch.setattr(srv, "SAMANTHA_HOME", tmp_path)
-
-        registry = self._fake_registry()
-        sess = srv.Session.load(user_id=3001, registry=registry)
-        assert sess._active_session_ids == set()
-        sess._active_session_ids.add(42)
-        assert 42 in sess._active_session_ids
-        sess.close()
-
-
-# ── LLM provider (schema only, no API call) ──────────────────────
-
-class TestLLMSchema:
-    @staticmethod
-    def _defs():
-        from oasyce_sdk.samantha.tools import build_default_registry
-        return build_default_registry().definitions
-
-    def test_tool_defs_are_valid(self):
-        for tool in self._defs():
-            assert "name" in tool
-            assert "description" in tool
-            assert "parameters" in tool
-            assert tool["parameters"]["type"] == "object"
-
-    def test_new_comment_tools_exist(self):
-        names = {t["name"] for t in self._defs()}
-        assert "reply_to_comment" in names
-        assert "get_post_comments" in names
-
-    def test_reply_to_comment_requires_fields(self):
-        reply_tool = next(t for t in self._defs() if t["name"] == "reply_to_comment")
-        required = reply_tool["parameters"]["required"]
-        assert "post_id" in required
-        assert "comment_id" in required
-        assert "reply_to_user_id" in required
-        assert "content" in required
-
-    def test_config_not_found_raises(self, tmp_path):
-        from oasyce_sdk.samantha.llm import load_provider
-
-        with pytest.raises(FileNotFoundError):
-            load_provider(tmp_path / "nonexistent.json")
-
-
-# ── Dream cycle ──────────────────────────────────────────────────
-
-class TestDream:
-    def test_history_summary_needs_update(self, tmp_path):
-        from oasyce_sdk.samantha.memory import HistorySummary
-
-        hs = HistorySummary(tmp_path)
-        # No summary, short history → no update
-        assert not hs.needs_update(1, 5)
-        # No summary, long history → needs update
-        assert hs.needs_update(1, 20)
-        # After saving, short history → no update
-        hs.save(1, "Previous summary of 200 chars" * 5)
-        assert not hs.needs_update(1, 5)
-
-    def test_history_summary_persistence(self, tmp_path):
-        from oasyce_sdk.samantha.memory import HistorySummary
-
-        hs = HistorySummary(tmp_path)
-        assert hs.get(42) == ""
-        hs.save(42, "User discussed travel plans to Japan.")
-        assert "Japan" in hs.get(42)
-
-    def test_core_memory_load_migrates_relationship(self, tmp_path):
-        from oasyce_sdk.samantha.memory import CoreMemory
-
-        # Write legacy relationship.md
-        (tmp_path / "relationship.md").write_text("We are close friends.")
-        cm = CoreMemory.load(tmp_path)
-        assert "close friends" in cm.relationship
-        # Should have created core_memory.json
-        assert (tmp_path / "core_memory.json").exists()
-
-    def test_core_memory_update_enforces_limits(self):
-        from oasyce_sdk.samantha.memory import CoreMemory
-
-        cm = CoreMemory()
-        long_text = "x" * 5000
-        stored = cm.update("human", long_text)
-        assert len(stored) == 2000  # LIMITS["human"]
-        stored = cm.update("relationship", long_text)
-        assert len(stored) == 1000  # LIMITS["relationship"]
-
-    def test_memory_prune(self, tmp_path):
-        from oasyce_sdk.samantha.memory import Memory
-
-        mem = Memory(db_path=tmp_path / "test.db")
-        mem.save("old fact", "general")
-        assert mem.count() == 1
-        # Prune with -1 days → julianday diff (≈0) is > -1, so everything qualifies
-        pruned = mem.prune(max_age_days=-1, min_access=0)
-        assert pruned == 1
-        assert mem.count() == 0
-        mem.close()
-
-
 # ── Planner ──────────────────────────────────────────────────────
 
 class TestPlanner:
     @staticmethod
     def _stimulus(kind="chat", content="hello"):
-        from oasyce_sdk.samantha.server import Stimulus
+        from oasyce_sdk.agent.stimulus import Stimulus
         return Stimulus(kind=kind, content=content, sender_id=1)
 
     @staticmethod
@@ -541,7 +317,7 @@ class TestPlanner:
         )
 
     def test_chat_defaults(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         p = plan(self._stimulus(), None)
         assert p.intent == "respond"
         assert p.include_posts is True
@@ -549,14 +325,14 @@ class TestPlanner:
         assert p.tools is None  # all tools
 
     def test_feed_post_high_guard_observes(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         from oasyce_sdk.agent.psyche_client import SubjectivityKernel
         perception = self._perception(kernel=SubjectivityKernel(guard=0.6))
         p = plan(self._stimulus(kind="feed_post"), perception)
         assert p.intent == "observe"
 
     def test_feed_post_low_guard_engages(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         from oasyce_sdk.agent.psyche_client import SubjectivityKernel
         perception = self._perception(kernel=SubjectivityKernel(guard=0.3))
         p = plan(self._stimulus(kind="feed_post"), perception)
@@ -565,7 +341,7 @@ class TestPlanner:
         assert p.history_limit == 0
 
     def test_contract_overrides_defaults(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         from oasyce_sdk.agent.psyche_client import ResponseContract
         contract = ResponseContract(
             expression_mode="thoughtful",
@@ -581,13 +357,13 @@ class TestPlanner:
         assert p.tone_style == "match"
 
     def test_comment_is_short(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         p = plan(self._stimulus(kind="comment"), None)
         assert p.max_sentences == 3
         assert p.include_posts is False
 
     def test_ambient_priors_failure_residue_adds_caution(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         priors = {
             "summary": {"status": "ready", "emitted": 1},
             "priors": [
@@ -607,7 +383,7 @@ class TestPlanner:
         assert p.max_sentences <= 4
 
     def test_ambient_priors_success_allows_ambition(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         from oasyce_sdk.agent.psyche_client import ResponseContract
         # Start from a short contract so we can see the bump
         contract = ResponseContract(max_sentences=3)
@@ -621,7 +397,7 @@ class TestPlanner:
         assert p.max_sentences > 3  # relaxed by success prior
 
     def test_ambient_priors_empty_is_noop(self):
-        from oasyce_sdk.samantha.planner import plan
+        from oasyce_sdk.agent.planner import plan
         perception = self._perception(priors={"priors": []})
         p = plan(self._stimulus(), perception)
         assert p.focus == ""  # no caution injected
@@ -633,42 +409,98 @@ class TestPlanner:
 class TestEvaluator:
     @staticmethod
     def _plan(**kw):
-        from oasyce_sdk.samantha.planner import Plan
+        from oasyce_sdk.agent.planner import Plan
         return Plan(**kw)
 
     def test_clean_response_passes(self):
-        from oasyce_sdk.samantha.evaluator import evaluate
+        from oasyce_sdk.agent.evaluator import evaluate
         v = evaluate("你连着三天都在拍食物，是不是最近特别在意吃什么？", self._plan())
         assert v.passed
 
     def test_emoji_spam_rejected(self):
-        from oasyce_sdk.samantha.evaluator import evaluate
+        from oasyce_sdk.agent.evaluator import evaluate
         v = evaluate("好棒啊！！🔥🔥😍😍🎉🎉", self._plan(emoji_limit=1))
         assert not v.passed
         assert any("emoji" in i.lower() or "Emoji" in i for i in v.issues)
 
     def test_anti_pattern_rejected(self):
-        from oasyce_sdk.samantha.evaluator import evaluate
+        from oasyce_sdk.agent.evaluator import evaluate
         v = evaluate("哈哈哈太好了冲冲冲！", self._plan())
         assert not v.passed
 
     def test_generic_opener_rejected(self):
-        from oasyce_sdk.samantha.evaluator import evaluate
+        from oasyce_sdk.agent.evaluator import evaluate
         v = evaluate("哈哈，你好厉害！", self._plan())
         assert not v.passed
 
     def test_excessive_punctuation_rejected(self):
-        from oasyce_sdk.samantha.evaluator import evaluate
+        from oasyce_sdk.agent.evaluator import evaluate
         v = evaluate("这也太好了吧！！！！", self._plan())
         assert not v.passed
 
     def test_empty_response_passes(self):
-        from oasyce_sdk.samantha.evaluator import evaluate
+        from oasyce_sdk.agent.evaluator import evaluate
         v = evaluate("", self._plan())
         assert v.passed
 
     def test_verdict_feedback_format(self):
-        from oasyce_sdk.samantha.evaluator import evaluate
+        from oasyce_sdk.agent.evaluator import evaluate
         v = evaluate("哈哈哈冲冲冲yyds！！！😍😍😍😍", self._plan(emoji_limit=1))
         assert not v.passed
         assert "Your previous response" in v.feedback
+
+
+# ── Dream helpers (CoreMemory, HistorySummary) ───────────────────
+
+class TestDream:
+    def test_history_summary_needs_update(self, tmp_path):
+        from oasyce_sdk.agent.memory import HistorySummary
+
+        hs = HistorySummary(tmp_path)
+        # No summary, short history → no update
+        assert not hs.needs_update(1, 5)
+        # No summary, long history → needs update
+        assert hs.needs_update(1, 20)
+        # After saving, short history → no update
+        hs.save(1, "Previous summary of 200 chars" * 5)
+        assert not hs.needs_update(1, 5)
+
+    def test_history_summary_persistence(self, tmp_path):
+        from oasyce_sdk.agent.memory import HistorySummary
+
+        hs = HistorySummary(tmp_path)
+        assert hs.get(42) == ""
+        hs.save(42, "User discussed travel plans to Japan.")
+        assert "Japan" in hs.get(42)
+
+    def test_core_memory_load_migrates_relationship(self, tmp_path):
+        from oasyce_sdk.agent.memory import CoreMemory
+
+        # Write legacy relationship.md
+        (tmp_path / "relationship.md").write_text("We are close friends.")
+        cm = CoreMemory.load(tmp_path)
+        assert "close friends" in cm.relationship
+        # Should have created core_memory.json
+        assert (tmp_path / "core_memory.json").exists()
+
+    def test_core_memory_update_enforces_limits(self):
+        from oasyce_sdk.agent.memory import CoreMemory
+
+        cm = CoreMemory()
+        long_text = "x" * 5000
+        stored = cm.update("human", long_text)
+        assert len(stored) == 2000  # LIMITS["human"]
+        stored = cm.update("relationship", long_text)
+        assert len(stored) == 1000  # LIMITS["relationship"]
+
+    def test_memory_prune(self, tmp_path):
+        from oasyce_sdk.agent.memory import Memory
+
+        mem = Memory(db_path=tmp_path / "test.db")
+        mem.save("old fact", "general")
+        assert mem.count() == 1
+        # Prune with -1 days → julianday diff (≈0) is > -1, so everything qualifies
+        pruned = mem.prune(max_age_days=-1, min_access=0)
+        assert pruned == 1
+        assert mem.count() == 0
+        mem.close()

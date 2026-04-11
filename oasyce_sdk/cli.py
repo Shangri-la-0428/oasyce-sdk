@@ -951,11 +951,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_economy = sub.add_parser("economy", help="Show delegate economic snapshot")
     p_economy.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
-    p_samantha = sub.add_parser("samantha", help="Samantha companion management")
-    sam_sub = p_samantha.add_subparsers(dest="samantha_command")
-    sam_sub.add_parser("init", help="Interactive setup — login, configure LLM")
-    sam_sub.add_parser("status", help="Show companion status")
-
     return parser
 
 
@@ -975,15 +970,6 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "economy":
         cmd_economy(args)
-        return
-    if args.command == "samantha":
-        from .samantha.cli import cmd_init as sam_init, cmd_status as sam_status
-        if args.samantha_command == "init":
-            sam_init(args)
-        elif args.samantha_command == "status":
-            sam_status(args)
-        else:
-            print("Usage: oasyce samantha [init|status]")
         return
 
     parser.print_help()
