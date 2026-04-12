@@ -198,12 +198,17 @@ class AgentRuntime:
         # 1. Collective memory (one call)
         capabilities: list[CapabilityStats] = []
         signals: list[Signal] = []
+        ambient_priors: dict[str, Any] | None = None
         try:
             result = self.thronglets.query(context, intent="resolve", space=self.space)
             capabilities = result.capabilities
             signals = result.signals
         except Exception:
             logger.debug("Thronglets unavailable", exc_info=True)
+        try:
+            ambient_priors = self.thronglets.ambient_priors(context, space=self.space)
+        except Exception:
+            logger.debug("Thronglets ambient_priors unavailable", exc_info=True)
 
         # 2. Emotional processing (one call)
         stimulus = synthesize_stimulus(context, capabilities, signals)
@@ -218,6 +223,7 @@ class AgentRuntime:
                 dynamic_context=pi.dynamic_context,
                 response_contract=pi.reply_envelope.response_contract,
                 generation_controls=pi.reply_envelope.generation_controls,
+                ambient_priors=ambient_priors,
             )
         except Exception:
             logger.debug("Psyche unavailable", exc_info=True)
@@ -226,6 +232,7 @@ class AgentRuntime:
             kernel=SubjectivityKernel(),
             capabilities=capabilities,
             signals=signals,
+            ambient_priors=ambient_priors,
         )
 
     def act(

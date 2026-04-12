@@ -37,18 +37,27 @@ _WEIGHTS: Dict[str, int] = {
     "api_key": 3,
 }
 
-# Binary extensions — skip PII scanning (no readable text)
-_BINARY_EXTS = frozenset({
+# Opaque binary extensions — skip content scanning entirely.
+# Structured data formats like sqlite/parquet are handled separately so they
+# are never auto-classified safe just because the bytes are not plain text.
+_OPAQUE_BINARY_EXTS = frozenset({
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tiff",
     ".heic", ".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a",
     ".mp4", ".mkv", ".avi", ".mov", ".webm",
     ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
     ".exe", ".dll", ".so", ".dylib", ".pyc", ".pyo",
+})
+
+# Structured data files may store readable values inside non-text containers.
+_STRUCTURED_DATA_EXTS = frozenset({
     ".db", ".sqlite", ".sqlite3", ".parquet",
 })
 
 # Max file size for PII scanning (16 MB)
 _MAX_SCAN_SIZE = 16 * 1024 * 1024
+
+_STRUCTURED_UNSCANNED_TYPE = "structured_unscanned"
+_STRUCTURED_BYTES_PATTERN = re.compile(rb"[\x09\x0a\x0d\x20-\x7e]{4,}")
 
 
 def scan_text(text: str) -> Dict[str, Any]:
@@ -71,19 +80,66 @@ def scan_text(text: str) -> Dict[str, Any]:
 def scan_file(path: str) -> Dict[str, Any]:
     """Scan a file for PII. Skips binary files and large files."""
     ext = os.path.splitext(path)[1].lower()
-    if ext in _BINARY_EXTS:
+    if ext in _OPAQUE_BINARY_EXTS:
         return {"has_sensitive": False, "findings": []}
 
     try:
         size = os.path.getsize(path)
         if size > _MAX_SCAN_SIZE:
+            if ext in _STRUCTURED_DATA_EXTS:
+                return {
+                    "has_sensitive": True,
+                    "findings": [{
+                        "type": _STRUCTURED_UNSCANNED_TYPE,
+                        "count": 1,
+                        "sample": ext or os.path.basename(path),
+                    }],
+                }
             return {"has_sensitive": False, "findings": []}
-        with open(path, "r", errors="ignore") as f:
-            text = f.read()
+
+        if ext in _STRUCTURED_DATA_EXTS:
+            with open(path, "rb") as f:
+                raw = f.read()
+            text = _extract_structured_text(raw)
+            if not text.strip():
+                return {
+                    "has_sensitive": True,
+                    "findings": [{
+                        "type": _STRUCTURED_UNSCANNED_TYPE,
+                        "count": 1,
+                        "sample": ext or os.path.basename(path),
+                    }],
+                }
+        else:
+            with open(path, "r", errors="ignore") as f:
+                text = f.read()
     except OSError:
+        if ext in _STRUCTURED_DATA_EXTS:
+            return {
+                "has_sensitive": True,
+                "findings": [{
+                    "type": _STRUCTURED_UNSCANNED_TYPE,
+                    "count": 1,
+                    "sample": ext or os.path.basename(path),
+                }],
+            }
         return {"has_sensitive": False, "findings": []}
 
     return scan_text(text)
+
+
+def _extract_structured_text(raw: bytes) -> str:
+    """Extract printable substrings from structured binary containers.
+
+    This is intentionally conservative: if we cannot meaningfully inspect
+    structured data, callers should treat the file as non-safe rather than
+    auto-allow it through the privacy gate.
+    """
+    chunks = [
+        match.group().decode("utf-8", errors="ignore")
+        for match in _STRUCTURED_BYTES_PATTERN.finditer(raw)
+    ]
+    return "\n".join(chunk for chunk in chunks if chunk)
 
 
 def risk_level(findings: Dict[str, Any]) -> str:
@@ -100,6 +156,8 @@ def risk_level(findings: Dict[str, Any]) -> str:
         return "safe"
     score = 0
     for item in findings["findings"]:
+        if item["type"] == _STRUCTURED_UNSCANNED_TYPE:
+            return "medium"
         weight = _WEIGHTS.get(item["type"], 1)
         score += weight * item["count"]
     if score >= 20:

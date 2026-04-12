@@ -267,6 +267,79 @@ def test_psyche_broken_targets_detects_unloadable_codex_config(monkeypatch, tmp_
     assert frontdoor._psyche_broken_targets() == ["Codex"]
 
 
+def test_configure_oasyce_mcp_creates_backup_for_existing_json_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir(parents=True)
+    config_path = cursor_dir / "mcp.json"
+    config_path.write_text(
+        json.dumps({"mcpServers": {"psyche": {"command": "npx"}}}),
+        encoding="utf-8",
+    )
+
+    configured = frontdoor._configure_oasyce_mcp()
+
+    assert configured == ["Cursor"]
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "psyche" in updated["mcpServers"]
+    assert "oasyce" in updated["mcpServers"]
+    backup = cursor_dir / "mcp.json.bak"
+    assert backup.exists()
+    original = json.loads(backup.read_text(encoding="utf-8"))
+    assert "oasyce" not in original["mcpServers"]
+
+
+def test_configure_oasyce_mcp_refuses_to_clobber_invalid_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir(parents=True)
+    config_path = cursor_dir / "mcp.json"
+    config_path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as exc:
+        frontdoor._configure_oasyce_mcp()
+
+    assert str(config_path) in str(exc.value)
+    assert config_path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_configure_oasyce_mcp_refuses_unreadable_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cursor_dir = tmp_path / ".cursor"
+    cursor_dir.mkdir(parents=True)
+    config_path = cursor_dir / "mcp.json"
+    config_path.write_text("{}", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def fake_read_text(self, *args, **kwargs):
+        if self == config_path:
+            raise PermissionError("denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fake_read_text)
+
+    with pytest.raises(RuntimeError) as exc:
+        frontdoor._configure_oasyce_mcp()
+
+    assert "Refusing to modify unreadable" in str(exc.value)
+
+
+def test_configure_oasyce_mcp_appends_codex_block_with_backup(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True)
+    config_path = codex_dir / "config.toml"
+    config_path.write_text('[mcp_servers.psyche]\ncommand = "npx"\n', encoding="utf-8")
+
+    configured = frontdoor._configure_oasyce_mcp()
+
+    assert configured == ["Codex"]
+    text = config_path.read_text(encoding="utf-8")
+    assert '[mcp_servers.psyche]' in text
+    assert '[mcp_servers.oasyce]' in text
+    assert (codex_dir / "config.toml.bak").exists()
+
+
 def test_resolve_thronglets_base_command_prefers_managed_launcher(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     launcher = tmp_path / ".thronglets" / "bin" / "thronglets-managed"

@@ -287,7 +287,7 @@ class Agent:
                     "role": "user",
                     "content": f"[Tool result for {tc.name}]: {result}",
                 })
-                if self._tools.is_terminal(tc.name):
+                if self._tools.is_terminal(tc.name) and not self._tools.result_is_error(result):
                     terminal_called = True
             if terminal_called:
                 logger.info(

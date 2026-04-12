@@ -54,6 +54,7 @@ def test_encode_delegate_policy_message():
             "window_seconds": "86400",
             "allowed_msgs": ["/cosmos.bank.v1beta1.MsgSend"],
             "enrollment_token": "shared-secret",
+            "max_msgs_per_exec": "3",
             "expiration_seconds": "0",
         },
     )
@@ -209,6 +210,7 @@ def test_delegate_helper_methods_build_expected_messages():
         per_tx_uoas=5,
         window_uoas=9,
         window_seconds=60,
+        max_msgs_per_exec=3,
     )
     assert signer.recorded == [
         (
@@ -220,6 +222,7 @@ def test_delegate_helper_methods_build_expected_messages():
                 "window_seconds": "60",
                 "allowed_msgs": ["/cosmos.bank.v1beta1.MsgSend"],
                 "enrollment_token": "shared-secret",
+                "max_msgs_per_exec": "3",
                 "expiration_seconds": "0",
             },
         )

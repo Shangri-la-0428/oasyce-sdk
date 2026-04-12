@@ -673,6 +673,67 @@ class TestGenerateTerminalBreak:
         assert rounds["n"] == 1
         assert executed == ["call-1-0", "call-1-1"]
 
+    def test_failed_terminal_tool_does_not_end_turn(self):
+        from oasyce_sdk.agent.base import Agent
+        from oasyce_sdk.agent.llm import LLMResponse, ToolCall
+        from oasyce_sdk.agent.stimulus import Stimulus
+        from oasyce_sdk.agent.tools import ToolRegistry, schema
+
+        rounds = {"n": 0}
+
+        class StubLLM:
+            def generate(self, messages, tools=None):
+                rounds["n"] += 1
+                if rounds["n"] == 1:
+                    return LLMResponse(
+                        text="first-pass",
+                        tool_calls=[ToolCall(name="fire", arguments={})],
+                    )
+                return LLMResponse(text="final-text")
+
+        class StubRegistry:
+            def get(self, *, needs_vision: bool = False):
+                return StubLLM()
+
+        class StubIdentity:
+            client = None
+            address = ""
+
+            def perceive(self, context):
+                from oasyce_sdk.agent.psyche_client import SubjectivityKernel
+                from oasyce_sdk.agent.runtime import Perception
+                return Perception(kernel=SubjectivityKernel(), capabilities=[], signals=[])
+
+            def act(self, *a, **k):
+                pass
+
+        class NullChannel:
+            def deliver(self, stimulus, response):
+                pass
+
+        tools = ToolRegistry()
+        tools.register(
+            "fire",
+            schema("fire", "fire"),
+            lambda args, ctx: (_ for _ in ()).throw(RuntimeError("boom")),
+            terminal=True,
+        )
+
+        agent = Agent(
+            identity=StubIdentity(),  # type: ignore[arg-type]
+            channel=NullChannel(),  # type: ignore[arg-type]
+            registry=StubRegistry(),  # type: ignore[arg-type]
+            tools=tools,
+            constitution="test",
+        )
+        try:
+            result = agent.process(Stimulus(kind="mention", content="hi"))
+        finally:
+            agent.close()
+
+        assert result == "final-text"
+        assert rounds["n"] == 2
+
 
 # ── Agent._plan hook ─────────────────────────────────────────────
 

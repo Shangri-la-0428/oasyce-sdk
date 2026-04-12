@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -619,6 +620,92 @@ command = "oasyce-mcp"
 """
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write text atomically so partial config writes never land on disk."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.remove(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _next_backup_path(path: Path) -> Path:
+    candidate = path.with_name(f"{path.name}.bak")
+    if not candidate.exists():
+        return candidate
+    index = 1
+    while True:
+        candidate = path.with_name(f"{path.name}.bak.{index}")
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def _backup_existing_config(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    backup = _next_backup_path(path)
+    shutil.copy2(path, backup)
+    return backup
+
+
+def _read_existing_text(path: Path, *, config_kind: str) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(
+            f"Refusing to modify unreadable {config_kind} config: {path}"
+        ) from exc
+
+
+def _load_json_config_for_update(path: Path, *, config_kind: str) -> tuple[dict, bool]:
+    text = _read_existing_text(path, config_kind=config_kind)
+    if text is None or not text.strip():
+        return {}, False
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Refusing to modify invalid {config_kind} config: {path}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"Refusing to modify non-object {config_kind} config: {path}"
+        )
+    return data, True
+
+
+def _write_json_config(path: Path, data: dict) -> None:
+    if path.exists():
+        _backup_existing_config(path)
+    _atomic_write_text(
+        path,
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+    )
+
+
+def _append_toml_block(path: Path, block: str, *, config_kind: str) -> None:
+    text = _read_existing_text(path, config_kind=config_kind) or ""
+    new_text = text
+    if new_text and not new_text.endswith("\n"):
+        new_text += "\n"
+    if new_text and not new_text.endswith("\n\n"):
+        new_text += "\n"
+    new_text += block
+    if path.exists():
+        _backup_existing_config(path)
+    _atomic_write_text(path, new_text)
+
+
 def _configure_oasyce_mcp() -> list[str]:
     """Auto-detect AI tools and configure oasyce-mcp for each.
 
@@ -635,28 +722,25 @@ def _configure_oasyce_mcp() -> list[str]:
     for name, path in json_tools:
         if not path.parent.exists():
             continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        except (json.JSONDecodeError, OSError):
-            data = {}
+        data, _ = _load_json_config_for_update(path, config_kind=name)
         servers = data.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            raise RuntimeError(
+                f"Refusing to modify {name} config with non-object mcpServers: {path}"
+            )
         if "oasyce" in servers:
             configured.append(name)
             continue
         servers["oasyce"] = _OASYCE_MCP_ENTRY
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        _write_json_config(path, data)
         configured.append(name)
 
     # --- Codex (TOML) ---
     codex_cfg = _home_dir() / ".codex" / "config.toml"
     if codex_cfg.parent.exists():
-        text = ""
-        if codex_cfg.exists():
-            text = codex_cfg.read_text(encoding="utf-8")
+        text = _read_existing_text(codex_cfg, config_kind="Codex") or ""
         if "[mcp_servers.oasyce]" not in text:
-            with open(codex_cfg, "a", encoding="utf-8") as f:
-                f.write("\n" + _CODEX_MCP_BLOCK)
+            _append_toml_block(codex_cfg, _CODEX_MCP_BLOCK, config_kind="Codex")
         configured.append("Codex")
 
     # --- OpenClaw (JSON, nested mcpServers) ---
@@ -667,14 +751,15 @@ def _configure_oasyce_mcp() -> list[str]:
         claw_cfg = claw_dir / "openclaw.json"
         if not claw_dir.exists():
             continue
-        try:
-            data = json.loads(claw_cfg.read_text(encoding="utf-8")) if claw_cfg.exists() else {}
-        except (json.JSONDecodeError, OSError):
-            data = {}
+        data, _ = _load_json_config_for_update(claw_cfg, config_kind="Claw")
         servers = data.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            raise RuntimeError(
+                f"Refusing to modify Claw config with non-object mcpServers: {claw_cfg}"
+            )
         if "oasyce" not in servers:
             servers["oasyce"] = _OASYCE_MCP_ENTRY
-            claw_cfg.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            _write_json_config(claw_cfg, data)
         configured.append("Claw")
         break
 

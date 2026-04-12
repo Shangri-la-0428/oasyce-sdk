@@ -323,6 +323,7 @@ class DelegatePolicy:
     allowed_msgs: List[str]
     expiration_seconds: int
     created_at_seconds: int
+    max_msgs_per_exec: int = 0
 
 
 @dataclass(frozen=True)

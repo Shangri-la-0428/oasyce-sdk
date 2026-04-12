@@ -1395,6 +1395,7 @@ class OasyceClient:
             allowed_msgs=p.get("allowed_msgs", []),
             expiration_seconds=int(p.get("expiration_seconds", "0")),
             created_at_seconds=int(p.get("created_at_seconds", "0")),
+            max_msgs_per_exec=int(p.get("max_msgs_per_exec", "0")),
         )
 
     def get_delegates(self, principal: str) -> List[DelegateRecord]:

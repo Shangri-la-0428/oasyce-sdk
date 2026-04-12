@@ -527,6 +527,7 @@ class NativeSigner:
         per_tx_uoas: int = 1_000_000,
         window_uoas: int = 10_000_000,
         window_seconds: int = 86400,
+        max_msgs_per_exec: int = 0,
         expiration_seconds: int = 0,
     ) -> TxResult:
         """Set delegation policy. One command — all agents operate under this."""
@@ -539,6 +540,7 @@ class NativeSigner:
                 "window_seconds": str(window_seconds),
                 "allowed_msgs": allowed_msgs,
                 "enrollment_token": token,
+                "max_msgs_per_exec": str(max_msgs_per_exec),
                 "expiration_seconds": str(expiration_seconds),
             },
         )])

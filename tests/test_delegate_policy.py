@@ -79,6 +79,7 @@ class TestLocalDelegatePolicy:
                         "per_tx_limit_uoas": 1000000,
                         "window_limit_uoas": 10000000,
                         "window_seconds": 86400,
+                        "max_msgs_per_exec": 4,
                         "expiration_seconds": 0,
                         "updated_at": "2026-04-04T00:00:00Z",
                     },
@@ -91,6 +92,7 @@ class TestLocalDelegatePolicy:
         assert hint is not None
         assert hint.principal == "oasyce1owner"
         assert hint.enrollment_token == "shared-secret"
+        assert hint.max_msgs_per_exec == 4
 
     def test_ensure_chain_identity_auto_enrolls_from_thronglets_hint(
         self, temp_oasyce_dir, monkeypatch
@@ -113,6 +115,7 @@ class TestLocalDelegatePolicy:
                         "per_tx_limit_uoas": 1000000,
                         "window_limit_uoas": 10000000,
                         "window_seconds": 86400,
+                        "max_msgs_per_exec": 4,
                         "expiration_seconds": 0,
                         "updated_at": "2026-04-04T00:00:00Z",
                     },
@@ -193,6 +196,7 @@ class TestLocalDelegatePolicy:
             per_tx_uoas: int = 1_000_000,
             window_uoas: int = 10_000_000,
             window_seconds: int = 86400,
+            max_msgs_per_exec: int = 0,
             expiration_seconds: int = 0,
         ):
             calls.append(
@@ -203,6 +207,7 @@ class TestLocalDelegatePolicy:
                     "per_tx_uoas": per_tx_uoas,
                     "window_uoas": window_uoas,
                     "window_seconds": window_seconds,
+                    "max_msgs_per_exec": max_msgs_per_exec,
                     "expiration_seconds": expiration_seconds,
                 }
             )
@@ -219,10 +224,12 @@ class TestLocalDelegatePolicy:
         assert resolved.account == wallet.address
         assert calls and calls[0]["wallet"] == wallet.address
         assert calls[0]["allowed_msgs"] == DEFAULT_ALLOWED_MSG_TYPES
+        assert calls[0]["max_msgs_per_exec"] == 0
         saved_policy = load_local_delegate_policy()
         assert saved_policy is not None
         assert saved_policy.principal == wallet.address
         assert saved_policy.allowed_msgs == DEFAULT_ALLOWED_MSG_TYPES
+        assert saved_policy.max_msgs_per_exec == 0
 
     def test_ensure_chain_identity_bootstraps_root_when_owner_hint_lacks_authority(
         self, temp_oasyce_dir, monkeypatch

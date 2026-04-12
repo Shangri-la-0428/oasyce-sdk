@@ -46,6 +46,7 @@ DEFAULT_ALLOWED_MSG_TYPES = [
 DEFAULT_PER_TX_LIMIT_UOAS = 10_000_000
 DEFAULT_WINDOW_LIMIT_UOAS = 100_000_000
 DEFAULT_WINDOW_SECONDS = 86_400
+DEFAULT_MAX_MSGS_PER_EXEC = 0
 
 
 def _oasyce_dir() -> str:
@@ -76,6 +77,7 @@ class LocalDelegatePolicy:
     per_tx_limit_uoas: int = 1_000_000
     window_limit_uoas: int = 10_000_000
     window_seconds: int = 86400
+    max_msgs_per_exec: int = DEFAULT_MAX_MSGS_PER_EXEC
     expiration_seconds: int = 0
     schema_version: str = LOCAL_DELEGATE_POLICY_SCHEMA_VERSION
     updated_at: str | None = None
@@ -100,6 +102,7 @@ class LocalDelegatePolicy:
             per_tx_limit_uoas=DEFAULT_PER_TX_LIMIT_UOAS,
             window_limit_uoas=DEFAULT_WINDOW_LIMIT_UOAS,
             window_seconds=DEFAULT_WINDOW_SECONDS,
+            max_msgs_per_exec=DEFAULT_MAX_MSGS_PER_EXEC,
         )
 
     @classmethod
@@ -116,6 +119,7 @@ class LocalDelegatePolicy:
             per_tx_limit_uoas=int(data.get("per_tx_limit_uoas", 1_000_000)),
             window_limit_uoas=int(data.get("window_limit_uoas", 10_000_000)),
             window_seconds=int(data.get("window_seconds", 86400)),
+            max_msgs_per_exec=int(data.get("max_msgs_per_exec", DEFAULT_MAX_MSGS_PER_EXEC)),
             expiration_seconds=int(data.get("expiration_seconds", 0)),
             schema_version=schema_version,
             updated_at=data.get("updated_at"),
@@ -130,6 +134,7 @@ class LocalDelegatePolicy:
             "per_tx_limit_uoas": self.per_tx_limit_uoas,
             "window_limit_uoas": self.window_limit_uoas,
             "window_seconds": self.window_seconds,
+            "max_msgs_per_exec": self.max_msgs_per_exec,
             "expiration_seconds": self.expiration_seconds,
             "updated_at": self.updated_at,
         }
@@ -263,6 +268,7 @@ def ensure_chain_identity(identity: IdentityContext, client, chain_id: str) -> I
         per_tx_uoas=policy.per_tx_limit_uoas,
         window_uoas=policy.window_limit_uoas,
         window_seconds=policy.window_seconds,
+        max_msgs_per_exec=policy.max_msgs_per_exec,
         expiration_seconds=policy.expiration_seconds,
     )
     if not result.success:

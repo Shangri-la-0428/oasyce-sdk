@@ -29,6 +29,7 @@ from oasyce_sdk.types import (
     Capability,
     DataAsset,
     Debt,
+    DelegatePolicy,
     Earnings,
     Escrow,
     Executor,
@@ -312,6 +313,37 @@ class TestSettlement(unittest.TestCase):
         escrows = self.client.list_escrows("oasyce1a")
         self.assertEqual(len(escrows), 1)
         self.assertEqual(escrows[0].status, "EXPIRED")
+
+
+# ---------------------------------------------------------------------------
+# Delegate tests
+# ---------------------------------------------------------------------------
+
+class TestDelegate(unittest.TestCase):
+
+    def setUp(self):
+        self.client = OasyceClient("http://testnode:1317")
+
+    @patch.object(requests.Session, "get")
+    def test_get_delegate_policy(self, mock_get):
+        mock_get.return_value = _mock_response(200, {
+            "policy": {
+                "principal": "oasyce1principal",
+                "per_tx_limit": {"denom": "uoas", "amount": "1000000"},
+                "window_limit": {"denom": "uoas", "amount": "10000000"},
+                "window_seconds": "86400",
+                "allowed_msgs": ["/cosmos.bank.v1beta1.MsgSend"],
+                "max_msgs_per_exec": "4",
+                "expiration_seconds": "0",
+                "created_at_seconds": "123",
+            }
+        })
+
+        policy = self.client.get_delegate_policy("oasyce1principal")
+
+        self.assertIsInstance(policy, DelegatePolicy)
+        self.assertEqual(policy.principal, "oasyce1principal")
+        self.assertEqual(policy.max_msgs_per_exec, 4)
 
 
 # ---------------------------------------------------------------------------

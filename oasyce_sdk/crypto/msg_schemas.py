@@ -161,6 +161,7 @@ MSG_SCHEMAS: Dict[str, List[Tuple[str, int, str]]] = {
         ("allowed_msgs", 5, "repeated_string"),
         ("enrollment_token", 6, "string"),
         ("expiration_seconds", 7, "uint64"),
+        ("max_msgs_per_exec", 8, "uint64"),
     ],
     "/oasyce.onboarding.v1.MsgRepayDebt": [
         ("creator", 1, "string"),

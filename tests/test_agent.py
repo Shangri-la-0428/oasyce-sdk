@@ -1,8 +1,10 @@
 """Tests for oasyce_sdk.agent — scanner, privacy, daemon, core."""
 
 import hashlib
+import json
 import os
 import tempfile
+import time
 
 import pytest
 
@@ -102,6 +104,39 @@ class TestPrivacy:
         try:
             result = privacy.scan_file(path)
             assert result["has_sensitive"] is False  # binary skipped
+        finally:
+            os.unlink(path)
+
+    def test_scan_file_structured_sqlite_is_not_auto_safe(self):
+        with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as f:
+            f.write(b"SQLite format 3\x00user@example.com\x0013812345678")
+            path = f.name
+        try:
+            result = privacy.scan_file(path)
+            assert result["has_sensitive"] is True
+            types = {finding["type"] for finding in result["findings"]}
+            assert "email" in types or "phone_cn" in types
+            assert privacy.check_file(path) != "safe"
+        finally:
+            os.unlink(path)
+
+    def test_scan_file_unreadable_structured_data_blocks_auto_safe(self, monkeypatch):
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+            f.write(b"PAR1")
+            path = f.name
+        try:
+            original_open = open
+
+            def fake_open(*args, **kwargs):
+                if args and args[0] == path and "b" in args[1]:
+                    raise OSError("permission denied")
+                return original_open(*args, **kwargs)
+
+            monkeypatch.setattr("builtins.open", fake_open)
+            result = privacy.scan_file(path)
+            assert result["has_sensitive"] is True
+            assert result["findings"][0]["type"] == "structured_unscanned"
+            assert privacy.check_file(path) == "medium"
         finally:
             os.unlink(path)
 
@@ -250,6 +285,12 @@ class TestScanner:
 # ---------------------------------------------------------------------------
 
 class TestDaemon:
+    @pytest.fixture(autouse=True)
+    def _daemon_paths(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(daemon, "OASYCE_DIR", str(tmp_path))
+        monkeypatch.setattr(daemon, "PID_FILE", str(tmp_path / "agent.pid"))
+        monkeypatch.setattr(daemon, "LOG_FILE", str(tmp_path / "agent.log"))
+
     def test_is_alive_nonexistent_pid(self):
         assert daemon._is_alive(999999999) is False
 
@@ -273,6 +314,47 @@ class TestDaemon:
             os.remove(daemon.PID_FILE)
         ok, msg = daemon.stop()
         assert ok is False
+
+    def test_read_pid_cleans_up_foreign_process_pidfile(self, monkeypatch):
+        with open(daemon.PID_FILE, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(), "state": daemon.RUNNING_STATE}, f)
+
+        monkeypatch.setattr(daemon, "_pid_looks_like_agent", lambda pid: False)
+
+        assert daemon._read_pid() is None
+        assert not os.path.exists(daemon.PID_FILE)
+
+    def test_start_refuses_duplicate_pending_start(self):
+        os.makedirs(daemon.OASYCE_DIR, exist_ok=True)
+        with open(daemon.PID_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                {"pid": 0, "state": daemon.STARTING_STATE, "written_at": time.time()},
+                f,
+            )
+
+        ok, msg = daemon.start()
+
+        assert ok is False
+        assert "already starting" in msg.lower()
+
+    def test_stop_keeps_pidfile_when_process_does_not_exit(self, monkeypatch):
+        with open(daemon.PID_FILE, "w", encoding="utf-8") as f:
+            json.dump({"pid": 4242, "state": daemon.RUNNING_STATE}, f)
+
+        monkeypatch.setattr(daemon, "_pid_looks_like_agent", lambda pid: True)
+        monkeypatch.setattr(daemon, "_is_alive", lambda pid: True)
+        monkeypatch.setattr(daemon.time, "sleep", lambda _: None)
+        timestamps = iter([1000.0, 1000.0, 1006.0])
+        monkeypatch.setattr(daemon.time, "time", lambda: next(timestamps))
+        signals = []
+        monkeypatch.setattr(daemon.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+
+        ok, msg = daemon.stop()
+
+        assert ok is False
+        assert "did not stop" in msg.lower()
+        assert os.path.exists(daemon.PID_FILE)
+        assert signals == [(4242, daemon.signal.SIGTERM)]
 
 
 # ---------------------------------------------------------------------------

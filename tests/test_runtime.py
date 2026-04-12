@@ -94,6 +94,7 @@ class TestOutcomeToWriteback:
 
 _thronglets_traces: list[dict] = []
 _thronglets_signals: list[dict] = []
+_thronglets_ambient_priors: list[dict] = []
 _psyche_inputs: list[dict] = []
 _psyche_outputs: list[dict] = []
 
@@ -101,6 +102,7 @@ _psyche_outputs: list[dict] = []
 def _reset():
     _thronglets_traces.clear()
     _thronglets_signals.clear()
+    _thronglets_ambient_priors.clear()
     _psyche_inputs.clear()
     _psyche_outputs.clear()
 
@@ -131,6 +133,12 @@ class MockThrongletsHandler(BaseHTTPRequestHandler):
         if self.path == "/v1/traces":
             _thronglets_traces.append(body)
             self._json({"id": f"trace-{len(_thronglets_traces)}"})
+        elif self.path == "/v1/ambient-priors":
+            _thronglets_ambient_priors.append(body)
+            self._json({
+                "summary": {"status": "ok"},
+                "priors": [{"kind": "watch", "message": "recent failures nearby"}],
+            })
         elif self.path == "/v1/signals":
             _thronglets_signals.append(body)
             self._json({"id": f"signal-{len(_thronglets_signals)}"})
@@ -322,7 +330,10 @@ class TestAgentRuntime:
         r = AgentRuntime(psyche_url=mock_psyche, thronglets_url=mock_thronglets)
         p = r.perceive("analyze data")
         assert p.kernel.vitality == 0.7
+        assert p.ambient_priors is not None
+        assert p.ambient_priors["priors"][0]["kind"] == "watch"
         assert "analyze data" in _psyche_inputs[0]["text"]
+        assert _thronglets_ambient_priors[0]["text"] == "analyze data"
         r.close()
 
     def test_act(self, mock_thronglets, mock_psyche):

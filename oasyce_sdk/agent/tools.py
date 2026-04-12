@@ -149,6 +149,14 @@ class ToolRegistry:
             logger.warning("Tool %s failed: %s", name, e)
             return json.dumps({"error": str(e)})
 
+    def result_is_error(self, result: str) -> bool:
+        """Whether a tool result represents a structured failure payload."""
+        try:
+            payload = json.loads(result)
+        except (TypeError, ValueError):
+            return False
+        return isinstance(payload, dict) and bool(payload.get("error"))
+
 
 # ── Schema helper ──────────────────────────────────────────────
 

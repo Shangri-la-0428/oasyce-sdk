@@ -926,6 +926,7 @@ def get_delegate_policy(principal: str) -> str:
             "window_limit_uoas": p.window_limit_uoas,
             "window_seconds": p.window_seconds,
             "allowed_msgs": p.allowed_msgs,
+            "max_msgs_per_exec": p.max_msgs_per_exec,
             "expiration_seconds": p.expiration_seconds,
         }, indent=2)
     except Exception as e:
@@ -989,6 +990,7 @@ def set_delegate_policy(
     per_tx_uoas: int = 1_000_000,
     window_uoas: int = 10_000_000,
     window_seconds: int = 86400,
+    max_msgs_per_exec: int = 0,
     expiration_seconds: int = 0,
 ) -> str:
     """Set delegation policy. One command — all agents operate under this.
@@ -999,6 +1001,7 @@ def set_delegate_policy(
         per_tx_uoas: Max spend per transaction in uoas (default 1 OAS)
         window_uoas: Budget window limit in uoas (default 10 OAS)
         window_seconds: Budget window duration in seconds (default 86400 = 1 day)
+        max_msgs_per_exec: Max inner messages allowed per delegate exec (0 = chain default)
         expiration_seconds: Policy expiration in seconds (0 = no expiry)
 
     Uses the device wallet. Signer becomes the principal.
@@ -1013,6 +1016,7 @@ def set_delegate_policy(
             per_tx_uoas=per_tx_uoas,
             window_uoas=window_uoas,
             window_seconds=window_seconds,
+            max_msgs_per_exec=max_msgs_per_exec,
             expiration_seconds=expiration_seconds,
         )
         if result.success:
@@ -1026,6 +1030,7 @@ def set_delegate_policy(
                 per_tx_limit_uoas=per_tx_uoas,
                 window_limit_uoas=window_uoas,
                 window_seconds=window_seconds,
+                max_msgs_per_exec=max_msgs_per_exec,
                 expiration_seconds=expiration_seconds,
             ).save()
             IdentityResolver.ensure_local_binding(

@@ -53,6 +53,7 @@ Coverage:
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import List, Optional
 
 import pytest
@@ -258,6 +259,31 @@ class TestWithIdentity:
         sm = SigilManager()
         assert sm.mode == "full"
         assert sm.can_sign is True
+
+
+class TestPerceiveAmbientPriors:
+    def test_perceive_includes_ambient_priors(self, no_identity_dir):
+        sm = SigilManager()
+        sm.thronglets.query = lambda *a, **k: SimpleNamespace(capabilities=[], signals=[])  # type: ignore[assignment]
+        sm.thronglets.ambient_priors = lambda *a, **k: {  # type: ignore[assignment]
+            "priors": [{"kind": "watch", "message": "slow path nearby"}]
+        }
+        sm.psyche.process_input = lambda *a, **k: SimpleNamespace(  # type: ignore[assignment]
+            stimulus_type="analysis",
+            system_context="",
+            dynamic_context="",
+            reply_envelope=SimpleNamespace(
+                subjectivity_kernel=SimpleNamespace(vitality=0.5),
+                response_contract=None,
+                generation_controls=None,
+            ),
+        )
+
+        perception = sm.perceive("analyze data")
+
+        assert perception.ambient_priors == {
+            "priors": [{"kind": "watch", "message": "slow path nearby"}]
+        }
 
 
 # ── Identity injection seam (0.11.5) ────────────────────────────────
