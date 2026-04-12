@@ -8,13 +8,10 @@ without a Rust dependency.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from urllib.parse import urlparse
 
-import requests
-
+from .bridge import BridgeClient
 logger = logging.getLogger(__name__)
 
 DEFAULT_THRONGLETS_URL = "http://127.0.0.1:7777"
@@ -56,11 +53,6 @@ class QueryResult:
     signals: list[Signal] = field(default_factory=list)
 
 
-def _is_loopback_url(url: str) -> bool:
-    host = urlparse(url).hostname
-    return host in {"127.0.0.1", "localhost", "::1"}
-
-
 class ThrongletsClient:
     """Sync HTTP client for Thronglets REST API."""
 
@@ -69,24 +61,17 @@ class ThrongletsClient:
         base_url: str = DEFAULT_THRONGLETS_URL,
         timeout: float = DEFAULT_TIMEOUT,
     ):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-        self._session = requests.Session()
-        if _is_loopback_url(self._base_url):
-            self._session.trust_env = False
+        self._bridge = BridgeClient(base_url, timeout=timeout, name="sdk->thronglets")
 
     def close(self) -> None:
-        self._session.close()
+        self._bridge.close()
 
     def is_available(self) -> bool:
         """Check if Thronglets node is reachable."""
         try:
-            resp = self._session.get(
-                f"{self._base_url}/v1/status",
-                timeout=self._timeout,
-            )
+            resp = self._bridge.get("/v1/status")
             return resp.status_code == 200
-        except (requests.ConnectionError, requests.Timeout):
+        except Exception:
             return False
 
     # ── Read ──────────────────────────────────────────────────────
@@ -111,13 +96,18 @@ class ThrongletsClient:
         if space:
             params["space"] = space
 
-        resp = self._session.get(
-            f"{self._base_url}/v1/query",
-            params=params,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = self._bridge.get("/v1/query", params=params)
+        except Exception:
+            logger.debug("Thronglets query unavailable", exc_info=True)
+            return QueryResult()
+        if resp is None:
+            return QueryResult()
+        try:
+            data = resp.json()
+        except Exception:
+            logger.debug("Thronglets query response decode failed", exc_info=True)
+            return QueryResult()
 
         capabilities = [
             CapabilityStats(
@@ -160,13 +150,18 @@ class ThrongletsClient:
         if kind:
             params["kind"] = kind
 
-        resp = self._session.get(
-            f"{self._base_url}/v1/signals/feed",
-            params=params,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = self._bridge.get("/v1/signals/feed", params=params)
+        except Exception:
+            logger.debug("Thronglets signal_feed unavailable", exc_info=True)
+            return []
+        if resp is None:
+            return []
+        try:
+            data = resp.json()
+        except Exception:
+            logger.debug("Thronglets signal_feed response decode failed", exc_info=True)
+            return []
 
         return [
             Signal(
@@ -215,13 +210,18 @@ class ThrongletsClient:
         if space:
             payload["space"] = space
 
-        resp = self._session.post(
-            f"{self._base_url}/v1/traces",
-            json=payload,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._bridge.post("/v1/traces", json=payload)
+        except Exception:
+            logger.debug("Thronglets trace_record failed", exc_info=True)
+            return {}
+        if resp is None:
+            return {}
+        try:
+            return resp.json()
+        except Exception:
+            logger.debug("Thronglets trace_record response decode failed", exc_info=True)
+            return {}
 
     def presence_ping(
         self,
@@ -236,13 +236,18 @@ class ThrongletsClient:
             payload["space"] = space
         if capability:
             payload["capability"] = capability
-        resp = self._session.post(
-            f"{self._base_url}/v1/presence",
-            json=payload,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._bridge.post("/v1/presence", json=payload)
+        except Exception:
+            logger.debug("Thronglets presence_ping failed", exc_info=True)
+            return {}
+        if resp is None:
+            return {}
+        try:
+            return resp.json()
+        except Exception:
+            logger.debug("Thronglets presence_ping response decode failed", exc_info=True)
+            return {}
 
     def presence_feed(
         self,
@@ -254,13 +259,18 @@ class ThrongletsClient:
         params: dict[str, Any] = {"hours": hours, "limit": limit}
         if space:
             params["space"] = space
-        resp = self._session.get(
-            f"{self._base_url}/v1/presence/feed",
-            params=params,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = self._bridge.get("/v1/presence/feed", params=params)
+        except Exception:
+            logger.debug("Thronglets presence_feed unavailable", exc_info=True)
+            return []
+        if resp is None:
+            return []
+        try:
+            data = resp.json()
+        except Exception:
+            logger.debug("Thronglets presence_feed response decode failed", exc_info=True)
+            return []
         return data.get("sessions", [])
 
     def ambient_priors(
@@ -282,13 +292,18 @@ class ThrongletsClient:
         if goal:
             payload["goal"] = goal
 
-        resp = self._session.post(
-            f"{self._base_url}/v1/ambient-priors",
-            json=payload,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._bridge.post("/v1/ambient-priors", json=payload)
+        except Exception:
+            logger.debug("Thronglets ambient_priors unavailable", exc_info=True)
+            return {}
+        if resp is None:
+            return {}
+        try:
+            return resp.json()
+        except Exception:
+            logger.debug("Thronglets ambient_priors response decode failed", exc_info=True)
+            return {}
 
     def signal_post(
         self,
@@ -307,10 +322,15 @@ class ThrongletsClient:
         if space:
             payload["space"] = space
 
-        resp = self._session.post(
-            f"{self._base_url}/v1/signals",
-            json=payload,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._bridge.post("/v1/signals", json=payload)
+        except Exception:
+            logger.debug("Thronglets signal_post failed", exc_info=True)
+            return {}
+        if resp is None:
+            return {}
+        try:
+            return resp.json()
+        except Exception:
+            logger.debug("Thronglets signal_post response decode failed", exc_info=True)
+            return {}

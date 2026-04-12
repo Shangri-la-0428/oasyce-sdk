@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import time
+import threading
 
 import pytest
 
@@ -278,6 +279,33 @@ class TestScanner:
             assert fi.size > 0
             assert len(fi.sha256) == 64
             assert fi.privacy_risk in ("safe", "low", "medium", "high", "critical")
+
+    def test_scan_batches_and_honors_cancel_event(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i in range(501):
+                with open(os.path.join(tmpdir, f"file-{i}.txt"), "w") as f:
+                    f.write(f"content-{i}")
+
+            cancel_event = threading.Event()
+            calls = 0
+
+            def fake_sha256_file(path):
+                nonlocal calls
+                calls += 1
+                if calls == 500:
+                    cancel_event.set()
+                return hashlib.sha256(path.encode()).hexdigest()
+
+            monkeypatch.setattr(scanner, "sha256_file", fake_sha256_file)
+
+            results = scanner.scan(
+                paths=[tmpdir],
+                check_privacy=False,
+                cancel_event=cancel_event,
+            )
+
+            assert len(results) == 500
+            assert calls == 500
 
 
 # ---------------------------------------------------------------------------

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from dataclasses import dataclass
-from typing import List, Optional, Set
+from typing import Iterator, List, Optional, Set, Tuple
 
 # Extension → category mapping
 _CATEGORIES = {
@@ -55,6 +56,7 @@ _SKIP_DIRS = {
 }
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+SCAN_BATCH_SIZE = 500
 
 
 @dataclass
@@ -86,42 +88,37 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
-def scan(
-    paths: Optional[List[str]] = None,
-    extensions: Optional[Set[str]] = None,
-    max_size: int = MAX_FILE_SIZE,
-    known_hashes: Optional[Set[str]] = None,
-    check_privacy: bool = True,
-) -> List[FileInfo]:
-    """Scan directories for new files with privacy risk assessment.
-
-    Args:
-        paths: Directories to scan. Defaults to ~/Documents, ~/Desktop, etc.
-        extensions: File extensions to include. Defaults to all known categories.
-        max_size: Skip files larger than this (bytes).
-        known_hashes: SHA256 hashes already registered — skip these.
-        check_privacy: Run PII detection on text files. Default True.
-
-    Returns:
-        List of FileInfo for newly discovered files (with privacy_risk field).
-    """
-    from . import privacy
-
-    paths = paths or DEFAULT_SCAN_PATHS
-    extensions = extensions or DEFAULT_EXTENSIONS
-    known = known_hashes or set()
-    results = []
+def _iter_scan_batches(
+    paths: List[str],
+    extensions: Set[str],
+    max_size: int,
+    cancel_event: threading.Event | None,
+    *,
+    batch_size: int = SCAN_BATCH_SIZE,
+) -> Iterator[list[Tuple[str, str, str, int]]]:
+    batch: list[Tuple[str, str, str, int]] = []
 
     for base_path in paths:
+        if cancel_event and cancel_event.is_set():
+            return
+
         base_path = os.path.expanduser(base_path)
         if not os.path.isdir(base_path):
             continue
 
         for dirpath, dirnames, filenames in os.walk(base_path):
+            if cancel_event and cancel_event.is_set():
+                return
+
             # Prune skippable directories in-place
-            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
+            dirnames[:] = [
+                d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")
+            ]
 
             for fname in filenames:
+                if cancel_event and cancel_event.is_set():
+                    return
+
                 if fname.startswith("."):
                     continue
 
@@ -138,32 +135,79 @@ def scan(
                 if size == 0 or size > max_size:
                     continue
 
-                try:
-                    content_hash = sha256_file(fpath)
-                except (OSError, PermissionError):
-                    continue
+                batch.append((fpath, fname, ext, size))
+                if len(batch) >= batch_size:
+                    yield batch
+                    batch = []
+                    if cancel_event and cancel_event.is_set():
+                        return
 
-                if content_hash in known:
-                    continue
+    if batch:
+        yield batch
 
-                category = classify(ext)
-                tags = [category]
-                if ext:
-                    tags.append(ext.lstrip("."))
 
-                # Privacy check
-                risk = "safe"
-                if check_privacy:
-                    risk = privacy.check_file(fpath)
+def scan(
+    paths: Optional[List[str]] = None,
+    extensions: Optional[Set[str]] = None,
+    max_size: int = MAX_FILE_SIZE,
+    known_hashes: Optional[Set[str]] = None,
+    check_privacy: bool = True,
+    cancel_event: threading.Event | None = None,
+) -> List[FileInfo]:
+    """Scan directories for new files with privacy risk assessment.
 
-                results.append(FileInfo(
-                    path=fpath,
-                    name=fname,
-                    sha256=content_hash,
-                    size=size,
-                    category=category,
-                    tags=tags,
-                    privacy_risk=risk,
-                ))
+    Args:
+        paths: Directories to scan. Defaults to ~/Documents, ~/Desktop, etc.
+        extensions: File extensions to include. Defaults to all known categories.
+        max_size: Skip files larger than this (bytes).
+        known_hashes: SHA256 hashes already registered — skip these.
+        check_privacy: Run PII detection on text files. Default True.
+        cancel_event: Optional cancellation signal checked between batches.
+
+    Returns:
+        List of FileInfo for newly discovered files (with privacy_risk field).
+    """
+    from . import privacy
+
+    paths = paths or DEFAULT_SCAN_PATHS
+    extensions = extensions or DEFAULT_EXTENSIONS
+    known = known_hashes or set()
+    results = []
+
+    for batch in _iter_scan_batches(paths, extensions, max_size, cancel_event):
+        if cancel_event and cancel_event.is_set():
+            break
+
+        for fpath, fname, ext, size in batch:
+            if cancel_event and cancel_event.is_set():
+                break
+
+            try:
+                content_hash = sha256_file(fpath)
+            except (OSError, PermissionError):
+                continue
+
+            if content_hash in known:
+                continue
+
+            category = classify(ext)
+            tags = [category]
+            if ext:
+                tags.append(ext.lstrip("."))
+
+            # Privacy check
+            risk = "safe"
+            if check_privacy:
+                risk = privacy.check_file(fpath)
+
+            results.append(FileInfo(
+                path=fpath,
+                name=fname,
+                sha256=content_hash,
+                size=size,
+                category=category,
+                tags=tags,
+                privacy_risk=risk,
+            ))
 
     return results

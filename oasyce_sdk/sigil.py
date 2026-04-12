@@ -37,10 +37,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Protocol, runtime_checkable
 
 from .client import OasyceClient
+from .errors import ValidationError
 from .crypto.signer import NativeSigner, TxResult
 from .crypto.wallet import Wallet
 from .delegate_policy import ensure_chain_identity
@@ -341,6 +343,7 @@ class SigilManager:
     ):
         self.client = OasyceClient(chain_url)
         self.space = space
+        self._session_id = uuid.uuid4().hex
 
         # Identity seam: explicit injection wins over back-compat discovery.
         # When ``identity`` is provided, we use it directly — no wallet
@@ -491,6 +494,28 @@ class SigilManager:
         Idempotent — if the Sigil already exists, returns existing ID.
         """
         identity = self._require_identity("genesis")
+        try:
+            derived_id = derive_sigil_id(bytes.fromhex(identity.public_key_hex))
+        except ValueError as exc:
+            raise ValidationError(
+                "SigilManager.genesis() requires a valid hex public key"
+            ) from exc
+
+        try:
+            existing = self.client.get_sigil(derived_id)
+        except Exception as exc:
+            if "not found" not in str(exc).lower():
+                raise
+            existing = None
+
+        if existing is not None:
+            if existing.public_key != identity.public_key_hex:
+                raise ValidationError(
+                    "SigilManager.genesis() found an existing sigil with a "
+                    "different public key"
+                )
+            return derived_id
+
         result = identity.signer.create_sigil(  # type: ignore[union-attr]
             public_key_hex=identity.public_key_hex,
             state_root_hex=state_root_hex,
@@ -499,7 +524,7 @@ class SigilManager:
         )
         if not result.success:
             raise RuntimeError(f"genesis failed: {result.raw_log}")
-        return identity.sigil_id
+        return derived_id
 
     def dissolve(self) -> None:
         """Permanently retire this Sigil. Irreversible."""
@@ -617,7 +642,7 @@ class SigilManager:
                 outcome=outcome,
                 context_text=context,
                 latency_ms=latency_ms,
-                session_id=self.sigil_id,
+                session_id=self._session_id,
                 sigil_id=self.sigil_id,
                 model_id="",
                 space=self.space,

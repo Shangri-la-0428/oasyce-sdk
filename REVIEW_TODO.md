@@ -1,6 +1,1 @@
-- [ ] oasyce_sdk/sigil.py:483 — `SigilManager.genesis()` 仍把链上“已存在”场景交给底层报错处理，和文档宣称的幂等语义并不完全一致。
-- [ ] oasyce_sdk/sigil.py:620 — `SigilManager.act()` 仍把 `session_id` 固定成 `sigil_id`，把一次运行的短期执行身份和持久主体标识折叠在了一起。
-- [ ] oasyce_sdk/agent/thronglets_client.py:64 — Thronglets HTTP client 仍是单次请求模型，没有重试、退避或短路策略，瞬时本地/网络抖动会直接丢掉 collective read/write。
-- [ ] oasyce_sdk/agent/psyche_client.py:264 — Psyche HTTP client 同样缺少重试/退避，短时不可用时会静默跳过 φ-loop writeback。
-- [ ] oasyce_sdk/agent/scanner.py:118 — 文件扫描仍是全量 `os.walk()` + 哈希 eager 模式，10 万文件级目录下缺少背压、分批和中断恢复保护。
-- [ ] oasyce_sdk/cli.py:853 — [cross-project] `oasyce share` / `oasyce join` 仍完全委托 Thronglets 连接文件语义；SDK 本身不独立刻画 handoff 文件是否含敏感载荷、何种字段必须被签名/校验。
+- [ ] /Users/wutongcheng/Desktop/Oasyce-Sigil/LOCAL_BINDING_CONTRACT_V1.md:89 — [cross-project] signed handoff files remain a Thronglets-owned bootstrap carrier in V1; an SDK-native handoff contract is explicitly deferred in the spec.

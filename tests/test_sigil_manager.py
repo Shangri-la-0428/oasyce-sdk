@@ -60,10 +60,12 @@ import pytest
 
 from oasyce_sdk.crypto.signer import TxResult
 from oasyce_sdk.crypto.wallet import Wallet
+from oasyce_sdk.errors import NotFoundError, ValidationError
 from oasyce_sdk.sigil import (
     ChainSigner,
     Identity,
     SigilManager,
+    derive_sigil_id,
     resolve_identity,
 )
 
@@ -260,6 +262,96 @@ class TestWithIdentity:
         assert sm.mode == "full"
         assert sm.can_sign is True
 
+    def test_genesis_returns_existing_sigil_without_recreating(self):
+        fake_signer = _FakeChainSigner()
+        wallet = Wallet.create()
+        identity = Identity(
+            sigil_id=derive_sigil_id(wallet.public_key_bytes),
+            address=wallet.address,
+            public_key_hex=wallet.public_key_bytes.hex(),
+            signer=fake_signer,
+        )
+        sm = SigilManager(
+            identity=identity,
+            chain_url="http://127.0.0.1:1317",
+            psyche_url="http://127.0.0.1:3210",
+            thronglets_url="http://127.0.0.1:7777",
+        )
+        sm.client.get_sigil = lambda sigil_id: SimpleNamespace(  # type: ignore[assignment]
+            public_key=identity.public_key_hex
+        )
+
+        assert sm.genesis() == identity.sigil_id
+        assert all(call[0] != "create_sigil" for call in fake_signer.calls)
+
+    def test_genesis_rejects_pubkey_mismatch(self):
+        fake_signer = _FakeChainSigner()
+        wallet = Wallet.create()
+        identity = Identity(
+            sigil_id=derive_sigil_id(wallet.public_key_bytes),
+            address=wallet.address,
+            public_key_hex=wallet.public_key_bytes.hex(),
+            signer=fake_signer,
+        )
+        sm = SigilManager(
+            identity=identity,
+            chain_url="http://127.0.0.1:1317",
+            psyche_url="http://127.0.0.1:3210",
+            thronglets_url="http://127.0.0.1:7777",
+        )
+        sm.client.get_sigil = lambda sigil_id: SimpleNamespace(  # type: ignore[assignment]
+            public_key="deadbeef"
+        )
+
+        with pytest.raises(ValidationError):
+            sm.genesis()
+        assert all(call[0] != "create_sigil" for call in fake_signer.calls)
+
+    def test_genesis_creates_when_missing(self):
+        fake_signer = _FakeChainSigner()
+        wallet = Wallet.create()
+        identity = Identity(
+            sigil_id=derive_sigil_id(wallet.public_key_bytes),
+            address=wallet.address,
+            public_key_hex=wallet.public_key_bytes.hex(),
+            signer=fake_signer,
+        )
+        sm = SigilManager(
+            identity=identity,
+            chain_url="http://127.0.0.1:1317",
+            psyche_url="http://127.0.0.1:3210",
+            thronglets_url="http://127.0.0.1:7777",
+        )
+        sm.client.get_sigil = lambda sigil_id: (_ for _ in ()).throw(NotFoundError("Sigil", sigil_id))  # type: ignore[assignment]
+
+        assert sm.genesis() == identity.sigil_id
+        assert fake_signer.calls[0][0] == "create_sigil"
+
+    def test_act_uses_per_session_id(self):
+        fake_signer = _FakeChainSigner()
+        wallet = Wallet.create()
+        identity = Identity(
+            sigil_id=derive_sigil_id(wallet.public_key_bytes),
+            address=wallet.address,
+            public_key_hex=wallet.public_key_bytes.hex(),
+            signer=fake_signer,
+        )
+        sm = SigilManager(
+            identity=identity,
+            chain_url="http://127.0.0.1:1317",
+            psyche_url="http://127.0.0.1:3210",
+            thronglets_url="http://127.0.0.1:7777",
+        )
+        captured = {}
+        sm.thronglets.trace_record = lambda *args, **kwargs: captured.update(kwargs) or {}  # type: ignore[assignment]
+        sm.psyche.process_output = lambda *a, **k: {}  # type: ignore[assignment]
+
+        sm.act("did something", "succeeded", "context")
+
+        assert captured["sigil_id"] == identity.sigil_id
+        assert captured["session_id"] != identity.sigil_id
+        assert captured["session_id"]
+
 
 class TestPerceiveAmbientPriors:
     def test_perceive_includes_ambient_priors(self, no_identity_dir):
@@ -443,17 +535,21 @@ class TestIdentityInjection:
         ``NativeSigner`` or ``Wallet`` inheritance.
         """
         fake = _FakeChainSigner()
+        public_key_hex = "03" + "22" * 32
         injected = Identity(
-            sigil_id="SIG_" + "ab" * 8,
+            sigil_id=derive_sigil_id(bytes.fromhex(public_key_hex)),
             address="oasyce1fakeaddr0000000000000000000000000000",
-            public_key_hex="03" + "22" * 32,
+            public_key_hex=public_key_hex,
             signer=fake,
         )
         sm = SigilManager(identity=injected)
+        sm.client.get_sigil = lambda sigil_id: (_ for _ in ()).throw(  # type: ignore[assignment]
+            NotFoundError("Sigil", sigil_id)
+        )
 
         # genesis → create_sigil
         sigil_id = sm.genesis(metadata="hello")
-        assert sigil_id == "SIG_" + "ab" * 8
+        assert sigil_id == injected.sigil_id
 
         # bond → bond_sigils (also exercises bond_id derivation)
         bid = sm.bond("SIG_" + "ef" * 8, scope="test-space")

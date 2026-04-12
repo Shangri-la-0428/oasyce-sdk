@@ -11,9 +11,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from urllib.parse import urlparse
 
-import requests
+from .bridge import BridgeClient
 
 logger = logging.getLogger(__name__)
 
@@ -256,11 +255,6 @@ class PsycheSnapshot:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-def _is_loopback_url(url: str) -> bool:
-    host = urlparse(url).hostname
-    return host in {"127.0.0.1", "localhost", "::1"}
-
-
 class PsycheClient:
     """Sync HTTP client for Psyche emotional engine."""
 
@@ -269,24 +263,17 @@ class PsycheClient:
         base_url: str = DEFAULT_PSYCHE_URL,
         timeout: float = DEFAULT_TIMEOUT,
     ):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-        self._session = requests.Session()
-        if _is_loopback_url(self._base_url):
-            self._session.trust_env = False
+        self._bridge = BridgeClient(base_url, timeout=timeout, name="sdk->psyche")
 
     def close(self) -> None:
-        self._session.close()
+        self._bridge.close()
 
     def is_available(self) -> bool:
         """Check if Psyche server is reachable."""
         try:
-            resp = self._session.get(
-                f"{self._base_url}/state",
-                timeout=self._timeout,
-            )
+            resp = self._bridge.get("/state")
             return resp.status_code == 200
-        except (requests.ConnectionError, requests.Timeout):
+        except Exception:
             return False
 
     # ── Core cycle ────────────────────────────────────────────────
@@ -305,13 +292,18 @@ class PsycheClient:
         if user_id:
             payload["userId"] = user_id
 
-        resp = self._session.post(
-            f"{self._base_url}/process-input",
-            json=payload,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = self._bridge.post("/process-input", json=payload)
+        except Exception:
+            logger.debug("Psyche process_input unavailable", exc_info=True)
+            return ProcessInputResult()
+        if resp is None:
+            return ProcessInputResult()
+        try:
+            data = resp.json()
+        except Exception:
+            logger.debug("Psyche process_input response decode failed", exc_info=True)
+            return ProcessInputResult()
 
         # Stimulus is a string or dict, confidence is top-level
         stimulus_raw = data.get("stimulus")
@@ -365,24 +357,35 @@ class PsycheClient:
                 outcome["effort"] = outcome_effort
             payload["outcome"] = outcome
 
-        resp = self._session.post(
-            f"{self._base_url}/process-output",
-            json=payload,
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()
+        try:
+            resp = self._bridge.post("/process-output", json=payload)
+        except Exception:
+            logger.debug("Psyche process_output unavailable", exc_info=True)
+            return {}
+        if resp is None:
+            return {}
+        try:
+            return resp.json()
+        except Exception:
+            logger.debug("Psyche process_output response decode failed", exc_info=True)
+            return {}
 
     # ── State queries ─────────────────────────────────────────────
 
     def get_state(self) -> PsycheSnapshot:
         """Get full Psyche state snapshot."""
-        resp = self._session.get(
-            f"{self._base_url}/state",
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = self._bridge.get("/state")
+        except Exception:
+            logger.debug("Psyche get_state unavailable", exc_info=True)
+            return PsycheSnapshot()
+        if resp is None:
+            return PsycheSnapshot()
+        try:
+            data = resp.json()
+        except Exception:
+            logger.debug("Psyche get_state response decode failed", exc_info=True)
+            return PsycheSnapshot()
 
         self_state = SelfState.from_dict(data.get("current", {}))
         baseline = SelfState.from_dict(data.get("baseline", {}))
@@ -401,9 +404,11 @@ class PsycheClient:
 
     def get_status_summary(self) -> str:
         """Get human-readable status summary."""
-        resp = self._session.get(
-            f"{self._base_url}/status-summary",
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
+        try:
+            resp = self._bridge.get("/status-summary")
+        except Exception:
+            logger.debug("Psyche status_summary unavailable", exc_info=True)
+            return ""
+        if resp is None:
+            return ""
         return resp.text
