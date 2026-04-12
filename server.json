@@ -6,12 +6,12 @@
     "url": "https://github.com/Shangri-la-0428/oasyce-sdk",
     "source": "github"
   },
-  "version": "0.4.1",
+  "version": "0.13.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "oasyce-sdk",
-      "version": "0.4.1",
+      "version": "0.13.0",
       "transport": {
         "type": "stdio"
       },
