@@ -4,6 +4,14 @@ Python runtime / bridge for the Oasyce stack. It keeps local binding above raw s
 
 ## Install
 
+Full stack (Thronglets + Psyche + SDK + Chain) in one command:
+
+    curl -fsSL https://raw.githubusercontent.com/Shangri-la-0428/oasyce-sdk/main/scripts/bootstrap.sh | bash
+
+Prerequisites: Node.js >= 22, Python >= 3.10.
+
+SDK only:
+
     pip install oasyce-sdk
 
 ## Unified Front Door

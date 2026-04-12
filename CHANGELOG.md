@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Full-stack bootstrap script** (`scripts/bootstrap.sh`) — one `curl |
+  bash` command installs Thronglets + Psyche + SDK and runs `oasyce start`.
+  Each layer degrades gracefully if prerequisites are missing.
+
 ## [0.13.0] - 2026-04-12
 
 ### Added

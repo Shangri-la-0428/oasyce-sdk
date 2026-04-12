@@ -36,9 +36,29 @@ Runtime / body for the Oasyce stack. It resolves local identity binding and conn
 
 ---
 
+## 全栈一键安装 / Full-Stack Bootstrap
+
+想要完整体验（Thronglets + Psyche + SDK + Chain）？一条命令：
+
+Want the full stack (Thronglets + Psyche + SDK + Chain)? One command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Shangri-la-0428/oasyce-sdk/main/scripts/bootstrap.sh | bash
+```
+
+它会依次：检查环境 → 安装 Thronglets → 安装 Psyche → 安装 SDK → 运行 `oasyce start` 统一编排。任何一层失败不阻断其他层。
+
+It will: check prerequisites → install Thronglets → install Psyche → install SDK → run `oasyce start`. Each layer degrades gracefully if unavailable.
+
+前置要求 / Prerequisites：**Node.js >= 22** + **Python >= 3.10**
+
+---
+
 ## 统一前门 / Unified Front Door
 
-如果你想在一台新电脑上把整套本地体验直接拉起，默认入口现在是：
+如果你已经单独装好了各层，或者只需要 SDK，默认入口是：
+
+If you already have the individual layers installed, or only need the SDK:
 
 ```bash
 pip install oasyce-sdk

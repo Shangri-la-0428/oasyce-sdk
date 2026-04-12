@@ -25,9 +25,23 @@ The first principle for the SDK is simple: resolve one local execution identity,
 
 The elegant progression is: standalone use first, optional binding second, optional public settlement last.
 
+## Full-Stack Bootstrap
+
+Want the complete experience (Thronglets + Psyche + SDK + Chain)? One command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Shangri-la-0428/oasyce-sdk/main/scripts/bootstrap.sh | bash
+```
+
+It will: check prerequisites → install Thronglets → install Psyche → install SDK → run `oasyce start`. Each layer degrades gracefully if unavailable.
+
+Prerequisites: **Node.js >= 22** + **Python >= 3.10**
+
+---
+
 ## Unified Front Door
 
-If you want the whole local stack on a new machine, the default path is now:
+If you already have the individual layers installed, or only need the SDK:
 
 ```bash
 pip install oasyce-sdk
