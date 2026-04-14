@@ -1,1 +1,0 @@
-- [ ] /Users/wutongcheng/Desktop/Oasyce-Sigil/LOCAL_BINDING_CONTRACT_V1.md:89 — [cross-project] signed handoff files remain a Thronglets-owned bootstrap carrier in V1; an SDK-native handoff contract is explicitly deferred in the spec.
