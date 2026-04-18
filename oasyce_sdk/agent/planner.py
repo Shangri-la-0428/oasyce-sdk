@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .cognitive import CognitiveMode
     from .runtime import Perception
     from .stimulus import Stimulus
 
@@ -34,6 +35,7 @@ class Plan:
     include_memories: bool = True   # whether to recall memories
     history_limit: int = 20         # how many history messages to include
     require_confirmation: bool = False  # from Psyche GenerationControls/boundaryMode
+    mode: "CognitiveMode | None" = None
 
 
 # ── Tool sets per intent ──────────────────────────────────────────
@@ -134,7 +136,10 @@ def plan(stimulus: Stimulus, perception: Perception | None = None) -> Plan:
     # ── Stimulus-specific planning ────────────────────────────
     kind = stimulus.kind
 
+    from .cognitive import CognitiveMode
+
     if kind == "chat":
+        p.mode = CognitiveMode.REACTIVE
         p.intent = "respond"
         p.tools = _CHAT_TOOLS
         p.include_posts = True
@@ -171,15 +176,17 @@ def plan(stimulus: Stimulus, perception: Perception | None = None) -> Plan:
         p.include_posts = False
         p.history_limit = 0
 
-        # Feed posts: Psyche decides whether to engage
         if kernel and kernel.guard > 0.5:
-            p.intent = "observe"  # stay quiet
+            p.mode = CognitiveMode.OBSERVING
+            p.intent = "observe"
         else:
+            p.mode = CognitiveMode.REACTIVE
             p.intent = "engage"
-            p.max_sentences = 2  # comments should be short
-            p.emoji_limit = 0    # no emoji in comments
+            p.max_sentences = 2
+            p.emoji_limit = 0
 
     elif kind == "comment":
+        p.mode = CognitiveMode.REACTIVE
         p.intent = "respond"
         p.tools = _COMMENT_TOOLS
         p.include_posts = False
@@ -188,6 +195,7 @@ def plan(stimulus: Stimulus, perception: Perception | None = None) -> Plan:
         p.max_sentences = 3
 
     elif kind == "mention":
+        p.mode = CognitiveMode.REACTIVE
         p.intent = "engage"
         p.tools = _ENGAGE_TOOLS
         p.include_posts = False
@@ -195,7 +203,21 @@ def plan(stimulus: Stimulus, perception: Perception | None = None) -> Plan:
         p.history_limit = 0
         p.max_sentences = 3
 
+    elif kind == "reflection":
+        p.mode = CognitiveMode.PROACTIVE
+        p.intent = "respond"
+        p.tools = None
+        p.include_posts = False
+        p.include_memories = True
+        p.history_limit = 0
+        p.max_sentences = 3
+
+    elif kind == "maintenance":
+        p.mode = CognitiveMode.REFLECTING
+        p.intent = "observe"
+
     else:
+        p.mode = CognitiveMode.REACTIVE
         p.intent = "respond"
 
     # ── Ambient priors (collective experience) ─────────────────

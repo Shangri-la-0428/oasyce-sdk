@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from .runtime import Perception
     from .stimulus import Stimulus
     from .tools import ToolContext, ToolRegistry
+    from .world import World
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,8 @@ class EnrichContext:
     image_urls: list[str] = field(default_factory=list)
     recent_posts: list[dict] = field(default_factory=list)
     hist_summary: str = ""
+    observations: list[dict] = field(default_factory=list)
+    essential_story: str = ""
 
 
 # ── Pipeline orchestration ───────────────────────────────────────
@@ -64,6 +67,7 @@ def run_pipeline(
     constitution: str,
     tool_registry: "ToolRegistry",
     plan_fn: Callable[["Stimulus", "Perception"], Plan] | None = None,
+    world: "World | None" = None,
 ) -> str | None:
     """Run Perceive → Plan → Enrich → Generate → Evaluate → Deliver → Reflect.
 
@@ -117,6 +121,8 @@ def run_pipeline(
         image_urls=ctx.image_urls,
         recent_posts=ctx.recent_posts,
         message_matches=ctx.message_matches,
+        observations=ctx.observations,
+        essential_story=ctx.essential_story,
     )
 
     # Vision routing: only when user explicitly sends images
@@ -142,7 +148,10 @@ def run_pipeline(
             pass  # use original response
 
     # 6. Deliver + Reflect
-    deliver(stimulus, response)
+    if world is not None and plan.mode is not None:
+        world.act(plan.mode, stimulus, response, plan)
+    else:
+        deliver(stimulus, response)
     log_turn(stimulus, response)
     reflect(stimulus, response, perception)
 

@@ -204,6 +204,32 @@ class Memory:
             self._conn.commit()
         return [Fact(*r) for r in rows]
 
+    def recall_scored(self, query: str, limit: int = 5) -> list[tuple[Fact, float]]:
+        """Search facts with BM25 relevance scores from FTS5."""
+        safe = _fts5_query(query)
+        if not safe:
+            return []
+        rows = self._conn.execute(
+            """SELECT f.id, f.content, f.category, f.created_at, f.access_count,
+                      facts_fts.rank
+               FROM facts_fts
+               JOIN facts f ON f.id = facts_fts.rowid
+               WHERE facts_fts MATCH ?
+               ORDER BY facts_fts.rank
+               LIMIT ?""",
+            (safe, limit),
+        ).fetchall()
+        now = datetime.now(timezone.utc).isoformat()
+        for row in rows:
+            self._conn.execute(
+                "UPDATE facts SET last_accessed = ?, access_count = access_count + 1 WHERE id = ?",
+                (now, row[0]),
+            )
+        if rows:
+            self._conn.commit()
+        from .store import _normalize_bm25
+        return [(Fact(*r[:5]), _normalize_bm25(r[5])) for r in rows]
+
     def all_facts(self, limit: int = 50) -> list[Fact]:
         """Return most recent facts."""
         rows = self._conn.execute(

@@ -44,13 +44,14 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .channel import Channel
 from .pipeline import EnrichContext, run_pipeline
 from .planner import Plan, plan as default_plan
 from .stimulus import Stimulus
 from .tools import ToolContext, ToolRegistry
+from .world import DefaultWorld
 
 if TYPE_CHECKING:
     from ..sigil import SigilManager
@@ -132,6 +133,40 @@ class Agent:
             build_tool_ctx=self._build_tool_ctx,
             generate=self._generate,
             deliver=self._deliver,
+            log_turn=self._log_turn,
+            reflect=self._reflect,
+            constitution=self.constitution,
+            tool_registry=self._tools,
+            plan_fn=self._plan,
+            world=self._world,
+        )
+
+    def process_stream(
+        self,
+        stimulus: Stimulus,
+        on_token: Callable[[str], None],
+    ) -> str | None:
+        """Run the pipeline with streaming token delivery.
+
+        Same as ``process()``, but calls ``on_token(chunk)`` for each
+        text chunk as it arrives from the LLM. Delivery is skipped —
+        the caller is responsible for routing chunks to the client.
+        """
+        def _gen(llm, stim, msgs, tools, ctx):
+            return self._generate(llm, stim, msgs, tools, ctx, on_token=on_token)
+
+        def _noop_deliver(stim, response):
+            pass
+
+        return run_pipeline(
+            stimulus,
+            perceive=self._perceive,
+            enrich=self._enrich,
+            build_prompt=self._build_prompt,
+            get_llm=self._get_llm,
+            build_tool_ctx=self._build_tool_ctx,
+            generate=_gen,
+            deliver=_noop_deliver,
             log_turn=self._log_turn,
             reflect=self._reflect,
             constitution=self.constitution,
@@ -234,6 +269,7 @@ class Agent:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         tool_ctx: ToolContext,
+        on_token: Callable[[str], None] | None = None,
     ) -> str:
         """Generator phase: LLM call with tool loop.
 
@@ -251,31 +287,47 @@ class Agent:
              duplicate comments.
           5. Otherwise loop, bailing after ``TOOL_LOOP_MAX_ROUNDS``
 
+        When ``on_token`` is provided and the LLM supports streaming,
+        text chunks are delivered incrementally via the callback.
+
         On LLM exception while images are in the prompt, retry once
         text-only — a common OpenAI-compat failure mode where the
         image format doesn't match the model's expected MIME. If the
         retry also fails, the exception propagates.
         """
+        use_stream = on_token is not None and hasattr(llm, "generate_stream")
         resp = None
+        last_text = ""
+
         for _ in range(self.TOOL_LOOP_MAX_ROUNDS):
-            try:
-                resp = llm.generate(messages, tools=tools)
-            except Exception as e:
-                has_images = any(
-                    isinstance(m.get("content"), list) for m in messages
+            if use_stream:
+                text, tool_calls = self._stream_one_round(
+                    llm, messages, tools, on_token,
                 )
-                if has_images:
-                    logger.warning(
-                        "LLM call failed with images, retrying text-only: %s", e,
-                    )
-                    messages = _strip_images(messages)
+                last_text = text
+            else:
+                try:
                     resp = llm.generate(messages, tools=tools)
-                else:
-                    raise
-            if not resp.tool_calls:
-                return resp.text
+                except Exception as e:
+                    has_images = any(
+                        isinstance(m.get("content"), list) for m in messages
+                    )
+                    if has_images:
+                        logger.warning(
+                            "LLM call failed with images, retrying text-only: %s", e,
+                        )
+                        messages = _strip_images(messages)
+                        resp = llm.generate(messages, tools=tools)
+                    else:
+                        raise
+                text = resp.text
+                tool_calls = resp.tool_calls
+
+            if not tool_calls:
+                return text
+
             terminal_called = False
-            for tc in resp.tool_calls:
+            for tc in tool_calls:
                 self._inject_tool_defaults(tc, stimulus)
                 result = self._tools.execute(tc.name, tc.arguments, tool_ctx)
                 logger.info("%s tool %s: %s", stimulus.kind, tc.name, result)
@@ -294,8 +346,29 @@ class Agent:
                     "%s terminal tool fired, ending turn after this round",
                     stimulus.kind,
                 )
-                return resp.text
+                return text
+
+        if use_stream:
+            return last_text
         return resp.text if resp else ""
+
+    @staticmethod
+    def _stream_one_round(
+        llm,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        on_token: Callable[[str], None],
+    ) -> tuple[str, list]:
+        """Run one streaming LLM call, delivering text via callback."""
+        full_text = ""
+        tool_calls: list = []
+        for chunk in llm.generate_stream(messages, tools=tools):
+            if chunk.text:
+                full_text += chunk.text
+                on_token(chunk.text)
+            if chunk.done:
+                tool_calls = chunk.tool_calls
+        return full_text, tool_calls
 
     def _inject_tool_defaults(
         self,
@@ -321,6 +394,10 @@ class Agent:
         implementation instead.
         """
         self.channel.deliver(stimulus, response)
+
+    @property
+    def _world(self):
+        return DefaultWorld(self.channel)
 
     def _log_turn(self, stimulus: Stimulus, response: str) -> None:
         """Persist the turn to verbatim storage. Default: no-op.

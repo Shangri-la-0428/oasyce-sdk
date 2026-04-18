@@ -35,21 +35,41 @@ Samantha is the reference deployment.
 
 from .base import Agent
 from .channel import Channel
+from .cognitive import Annotation, Appraisal, CognitiveMode, KnowledgeTriple, Observation
+from .llm import LLMChunk
 from .pipeline import EnrichContext, run_pipeline
 from .planner import Plan, plan
 from .stimulus import Stimulus
+from .self import Self, default_appraise
+from .store import KnowledgeStore, ObservationStore
+from .stream import Stream
 from .tools import Tool, ToolContext, ToolRegistry, schema
+from .world import DefaultWorld, Outcome, World
 
 __all__ = [
     "Agent",
+    "Annotation",
+    "Appraisal",
     "Channel",
+    "CognitiveMode",
     "EnrichContext",
+    "KnowledgeStore",
+    "KnowledgeTriple",
+    "LLMChunk",
+    "Observation",
+    "ObservationStore",
     "Plan",
     "Stimulus",
+    "Self",
+    "Stream",
     "Tool",
+    "default_appraise",
     "ToolContext",
     "ToolRegistry",
     "plan",
     "run_pipeline",
     "schema",
+    "DefaultWorld",
+    "Outcome",
+    "World",
 ]

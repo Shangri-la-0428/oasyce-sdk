@@ -16,7 +16,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Iterator, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,14 @@ class LLMResponse:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class LLMChunk:
+    """One piece of a streaming LLM response."""
+    text: str = ""
+    done: bool = False
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 class LLMProvider(Protocol):
@@ -90,6 +98,58 @@ class OpenAICompatProvider:
                 "output": resp.usage.completion_tokens,
             } if resp.usage else {},
         )
+
+    def generate_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[LLMChunk]:
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools:
+            kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
+
+        stream = self._client.chat.completions.create(**kwargs)
+        accumulated: dict[int, dict[str, str]] = {}
+
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            choice = chunk.choices[0]
+            delta = choice.delta
+
+            if delta and delta.content:
+                yield LLMChunk(text=delta.content)
+
+            if delta and delta.tool_calls:
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in accumulated:
+                        accumulated[idx] = {"id": "", "name": "", "args": ""}
+                    if tc.id:
+                        accumulated[idx]["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name:
+                            accumulated[idx]["name"] = tc.function.name
+                        if tc.function.arguments:
+                            accumulated[idx]["args"] += tc.function.arguments
+
+            if choice.finish_reason:
+                final_tools = [
+                    ToolCall(
+                        name=d["name"],
+                        arguments=json.loads(d["args"]) if d["args"] else {},
+                        id=d["id"],
+                    )
+                    for d in accumulated.values()
+                ]
+                yield LLMChunk(done=True, tool_calls=final_tools)
+                return
+
+        yield LLMChunk(done=True)
 
 
 # ── Anthropic-compatible provider ──────────────────────────────
@@ -162,6 +222,55 @@ class AnthropicProvider:
             tool_calls=tool_calls,
             usage={"input": resp.usage.input_tokens, "output": resp.usage.output_tokens},
         )
+
+    def generate_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> Iterator[LLMChunk]:
+        system_text = ""
+        chat_messages = []
+        for m in messages:
+            if m["role"] == "system":
+                system_text += m["content"] + "\n"
+            else:
+                content = m["content"]
+                if isinstance(content, list):
+                    content = self._convert_content_blocks(content)
+                chat_messages.append({"role": m["role"], "content": content})
+
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "max_tokens": 2048,
+            "messages": chat_messages,
+        }
+        if system_text:
+            kwargs["system"] = system_text.strip()
+        if tools:
+            kwargs["tools"] = [
+                {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "input_schema": t.get("parameters", {}),
+                }
+                for t in tools
+            ]
+
+        with self._client.messages.stream(**kwargs) as stream:
+            for text in stream.text_stream:
+                yield LLMChunk(text=text)
+            response = stream.get_final_message()
+
+        tool_calls = []
+        for block in response.content:
+            if block.type == "tool_use":
+                tool_calls.append(ToolCall(
+                    name=block.name,
+                    arguments=block.input,
+                    id=block.id,
+                ))
+
+        yield LLMChunk(done=True, tool_calls=tool_calls)
 
     @staticmethod
     def _convert_content_blocks(blocks: list) -> list:

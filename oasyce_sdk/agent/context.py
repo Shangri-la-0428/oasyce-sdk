@@ -207,6 +207,8 @@ def build_messages(
     image_urls: list[str] | None = None,
     recent_posts: list[dict[str, Any]] | None = None,
     message_matches: list[dict[str, Any]] | None = None,
+    observations: list[dict[str, Any]] | None = None,
+    essential_story: str = "",
     context_window: int = DEFAULT_CONTEXT_WINDOW,
 ) -> list[dict[str, Any]]:
     """Assemble the full message list with budget-aware truncation.
@@ -275,6 +277,13 @@ def build_messages(
             system_parts.append(sig_text)
             system_used += _estimate_tokens(sig_text)
 
+    # Essential story (Layer 1 auto-summary, always present)
+    if essential_story:
+        es_budget = budget.system // 6
+        es_text = _truncate_text(essential_story, es_budget)
+        system_parts.append(f"[Essential story of your relationship]\n{es_text}")
+        system_used += _estimate_tokens(es_text)
+
     # Core Memory blocks (MemGPT-inspired, always present, char-limited)
     if core_memory:
         remaining_system = max(500, budget.system - system_used)
@@ -333,6 +342,20 @@ def build_messages(
         msg_text = "[Relevant past exchanges]\n" + "\n".join(msg_lines)
         msg_text = _truncate_text(msg_text, msg_budget)
         system_parts.append(msg_text)
+
+    if observations:
+        obs_budget = budget.retrieval // 4
+        obs_lines = []
+        for o in observations[:5]:
+            line = o.get("content", "")[:200]
+            if o.get("location"):
+                line += f" ({o['location']})"
+            if o.get("observed_at"):
+                line += f" [{o['observed_at'][:10]}]"
+            obs_lines.append(f"- {line}")
+        obs_text = "[Things you've observed]\n" + "\n".join(obs_lines)
+        obs_text = _truncate_text(obs_text, obs_budget)
+        system_parts.append(obs_text)
 
     messages.append({"role": "system", "content": "\n\n".join(system_parts)})
 
