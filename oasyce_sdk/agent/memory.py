@@ -152,6 +152,10 @@ class Memory:
         if conn is None:
             conn = sqlite3.connect(self._path)
             conn.execute("PRAGMA journal_mode=WAL")
+            # Default is 1000, but SQLite may skip auto-checkpoint if
+            # checkpointing itself fails silently. Set it explicitly so
+            # the WAL file doesn't grow unbounded on busy instances.
+            conn.execute("PRAGMA wal_autocheckpoint=1000")
             conn.executescript(_SCHEMA)
             self._local.conn = conn
         return conn

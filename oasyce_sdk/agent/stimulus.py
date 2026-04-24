@@ -51,3 +51,12 @@ class Stimulus:
     comment_id: int = 0
     image_urls: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Webhook payloads may deliver large integer IDs as JSON strings.
+        # Normalize to int at the type boundary so downstream code can
+        # safely use these as dict keys without int/str hash collisions.
+        for attr in ("sender_id", "post_id", "session_id", "comment_id"):
+            value = getattr(self, attr)
+            if value and not isinstance(value, int):
+                setattr(self, attr, int(value))

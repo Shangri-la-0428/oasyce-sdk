@@ -43,6 +43,7 @@ transport concerns out of the Agent body.
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -59,6 +60,44 @@ if TYPE_CHECKING:
     from .runtime import Perception
 
 logger = logging.getLogger(__name__)
+
+
+# ── Global LLM quota circuit breaker ───────────────────────────────
+#
+# When the upstream LLM reports quota exhaustion (Tencent lkeap code
+# 20098 "token plan quota exhausted", or similar), continuing to hammer
+# the endpoint wastes request budget on guaranteed failures. Pause the
+# pipeline for a fixed cooldown; scheduled streams will naturally retry
+# after the window elapses.
+
+_QUOTA_COOLDOWN_SEC = 1800.0  # 30 minutes
+_quota_exhausted_at: float = 0.0
+
+
+def _is_quota_exhausted() -> bool:
+    global _quota_exhausted_at
+    if _quota_exhausted_at == 0.0:
+        return False
+    if time.monotonic() - _quota_exhausted_at > _QUOTA_COOLDOWN_SEC:
+        _quota_exhausted_at = 0.0
+        logger.info("LLM quota cooldown elapsed, resuming pipeline")
+        return False
+    return True
+
+
+def _mark_quota_exhausted(cause: object) -> None:
+    global _quota_exhausted_at
+    if _quota_exhausted_at == 0.0:
+        logger.warning(
+            "LLM quota exhausted, pipeline paused for %.0fs: %s",
+            _QUOTA_COOLDOWN_SEC, cause,
+        )
+    _quota_exhausted_at = time.monotonic()
+
+
+def _looks_like_quota_error(error: BaseException) -> bool:
+    msg = str(error).lower()
+    return "quota exhausted" in msg or "20098" in msg
 
 
 class Agent:
@@ -115,6 +154,9 @@ class Agent:
         Use ``process`` directly for synchronous execution (tests,
         proactive loops).
         """
+        if _is_quota_exhausted():
+            logger.debug("submit dropped under quota cooldown: kind=%s", stimulus.kind)
+            return
         self._executor.submit(self._safe_process, stimulus)
 
     def process(self, stimulus: Stimulus) -> str | None:
@@ -124,6 +166,9 @@ class Agent:
         purely the wiring from ``self.*`` hooks to the pipeline
         signature. Subclasses override hooks, not this method.
         """
+        if _is_quota_exhausted():
+            logger.debug("process skipped under quota cooldown: kind=%s", stimulus.kind)
+            return None
         return run_pipeline(
             stimulus,
             perceive=self._perceive,
@@ -309,6 +354,9 @@ class Agent:
                 try:
                     resp = llm.generate(messages, tools=tools)
                 except Exception as e:
+                    if _looks_like_quota_error(e):
+                        _mark_quota_exhausted(e)
+                        raise
                     has_images = any(
                         isinstance(m.get("content"), list) for m in messages
                     )
@@ -317,7 +365,12 @@ class Agent:
                             "LLM call failed with images, retrying text-only: %s", e,
                         )
                         messages = _strip_images(messages)
-                        resp = llm.generate(messages, tools=tools)
+                        try:
+                            resp = llm.generate(messages, tools=tools)
+                        except Exception as retry_e:
+                            if _looks_like_quota_error(retry_e):
+                                _mark_quota_exhausted(retry_e)
+                            raise
                     else:
                         raise
                 text = resp.text
